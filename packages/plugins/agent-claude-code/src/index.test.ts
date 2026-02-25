@@ -186,6 +186,20 @@ describe("getLaunchCommand", () => {
     expect(cmd).not.toContain("--model");
     expect(cmd).not.toContain("-p");
   });
+
+  it("reads prompt from file when promptFile is set", () => {
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ promptFile: "/tmp/test-prompt.md" }));
+    expect(cmd).toContain("-p");
+    expect(cmd).toContain("$(cat '/tmp/test-prompt.md')");
+  });
+
+  it("prefers promptFile over prompt", () => {
+    const cmd = agent.getLaunchCommand(
+      makeLaunchConfig({ prompt: "inline prompt", promptFile: "/tmp/test-prompt.md" }),
+    );
+    expect(cmd).toContain("$(cat '/tmp/test-prompt.md')");
+    expect(cmd).not.toContain("inline prompt");
+  });
 });
 
 // =========================================================================

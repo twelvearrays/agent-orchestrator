@@ -320,6 +320,15 @@ export interface AgentLaunchConfig {
   projectConfig: ProjectConfig;
   issueId?: string;
   prompt?: string;
+  /**
+   * Path to a file containing the initial prompt.
+   * Preferred over prompt for prompts containing arbitrary user content
+   * (e.g. issue descriptions from trackers) that may contain characters
+   * unsafe for shell quoting.
+   *
+   * When set, takes precedence over prompt.
+   */
+  promptFile?: string;
   permissions?: "skip" | "default";
   model?: string;
   /**
@@ -1002,6 +1011,8 @@ export interface InputSourceConfig {
   url?: string;
   auth?: { type: "bearer"; token: string };
   toolMap?: Record<string, unknown>;
+  /** Linear team keys to include (e.g. ["POS", "ENG"]). Omit for all teams. */
+  teams?: string[];
 }
 
 export interface TrackerConfig {
