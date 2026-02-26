@@ -1,0 +1,121 @@
+# Agent Orchestrator — Reboot Dashboard
+# Requires: LINEAR_API_KEY, GITHUB_TOKEN
+
+port: 3000
+
+defaults:
+  runtime: tmux
+  agent: claude-code
+  workspace: worktree
+  notifiers: [desktop]
+
+projects:
+  dashboard:
+    name: Reboot Dashboard
+    repo: twelvearrays/dashboard          # UPDATE to your actual repo
+    path: ~/dashboard                      # UPDATE to your local path
+    defaultBranch: main
+    sessionPrefix: dsh
+
+    # Linear integration — Dashboard team
+    tracker:
+      plugin: linear
+      teamId: "f65d8805-05b4-41d2-a90b-dffe27e24d0b"
+
+    defaultInputSource: linear
+    inputSources:
+      linear:
+        type: linear
+
+    # Linear MCP — gives agents access to update issues, labels, and states
+    mcp:
+      - name: linear
+        url: https://mcp.linear.app/sse
+        scope: readwrite
+        env:
+          LINEAR_API_KEY: "${LINEAR_API_KEY}"
+
+    # Agent config
+    agentConfig:
+      permissions: skip
+      model: sonnet
+
+    # Self-review rules injected into every agent prompt
+    agentRulesFile: .agent-rules.md
+
+    # Per-project reaction overrides
+    reactions:
+      ci-failed:
+        auto: true
+        action: send-to-agent
+        message: |
+          CI failed. FIRST: add the "ci-failed" label to your Linear issue.
+          Then follow this checklist:
+          1. Read the full CI log output
+          2. Identify every failing test and build error
+          3. Fix each failure — do NOT skip or disable tests
+          4. Run the build locally: pnpm build
+          5. Run tests locally: pnpm test
+          6. If both pass, push. If not, repeat from step 2.
+          7. AFTER CI passes: remove the "ci-failed" label from the Linear issue.
+        retries: 3
+        escalateAfter: 1h
+
+      changes-requested:
+        auto: true
+        action: send-to-agent
+        message: |
+          Review comments received. For each comment:
+          1. Read the comment carefully
+          2. If it's a code change request, implement it
+          3. If it's a question, reply with context
+          4. After all comments are addressed, run the full self-review checklist from .agent-rules.md
+          5. Push and reply to each comment thread
+          6. Update Linear labels if any changed (e.g., remove "ci-failed" if CI is green now)
+        escalateAfter: 2h
+
+      approved-and-green:
+        auto: true
+        action: send-to-agent
+        message: |
+          PR is approved and CI is green. Do the following:
+          1. Remove the "agent-working" label from your Linear issue
+          2. Move the issue to "In QA" state
+          3. Post a comment on the Linear issue: "PR approved and CI green. Ready for QA."
+          4. Do NOT merge the PR — a human will merge after QA.
+
+      agent-stuck:
+        threshold: 10m
+        action: notify
+        priority: urgent
+
+# Global reactions (apply to all projects unless overridden)
+reactions:
+  ci-failed:
+    auto: true
+    action: send-to-agent
+    retries: 2
+
+  changes-requested:
+    auto: true
+    action: send-to-agent
+    escalateAfter: 30m
+
+  approved-and-green:
+    auto: true
+    action: send-to-agent
+    message: |
+      PR is approved and CI is green.
+      1. Remove "agent-working" label from your Linear issue
+      2. Move the issue to "In QA" state
+      3. Post a comment: "PR approved and CI green. Ready for QA."
+
+  agent-stuck:
+    threshold: 10m
+    action: notify
+    priority: urgent
+
+  all-complete:
+    auto: true
+    action: notify
+    priority: info
