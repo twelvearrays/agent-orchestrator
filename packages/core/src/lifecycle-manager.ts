@@ -32,6 +32,7 @@ import {
   type Session,
   type EventPriority,
   type ProjectConfig as _ProjectConfig,
+  type Tracker,
 } from "./types.js";
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
@@ -151,6 +152,8 @@ function eventToReactionKey(eventType: EventType): string | null {
       return "agent-exited";
     case "summary.all_complete":
       return "all-complete";
+    case "pr.created":
+      return "pr-opened";
     default:
       return null;
   }
@@ -408,6 +411,37 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           action: "auto-merge",
           escalated: false,
         };
+      }
+
+      case "update-tracker": {
+        if (reactionConfig.trackerState && sessionId !== "system") {
+          try {
+            const session = await sessionManager.get(sessionId);
+            const project = config.projects[projectId];
+            if (session?.issueId && project) {
+              const trackerName = project.tracker?.plugin ?? "linear";
+              const tracker = registry.get<Tracker>("tracker", trackerName);
+              if (tracker?.updateIssue) {
+                await tracker.updateIssue(session.issueId, { stateName: reactionConfig.trackerState }, project);
+              }
+            }
+            return {
+              reactionType: reactionKey,
+              success: true,
+              action: "update-tracker",
+              message: reactionConfig.trackerState,
+              escalated: false,
+            };
+          } catch {
+            return {
+              reactionType: reactionKey,
+              success: false,
+              action: "update-tracker",
+              escalated: false,
+            };
+          }
+        }
+        break;
       }
     }
 

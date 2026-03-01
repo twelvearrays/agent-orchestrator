@@ -41,3 +41,9 @@ projects:
     agentRulesFile: .agent-rules.md
     agentConfig:
       permissions: skip
+
+reactions:
+  pr-opened:
+    auto: true
+    action: update-tracker
+    trackerState: "In QA"

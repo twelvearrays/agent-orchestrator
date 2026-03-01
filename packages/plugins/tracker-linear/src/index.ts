@@ -451,6 +451,39 @@ function createLinearTracker(query: GraphQLTransport): Tracker {
       const issueUuid = issueData.issue.id;
       const teamId = issueData.issue.team.id;
 
+      // Handle stateName: move to a specific state by name (e.g. "In QA")
+      if (update.stateName) {
+        const statesData = await query<{
+          workflowStates: { nodes: Array<{ id: string; name: string; type: string }> };
+        }>(
+          `query($teamId: ID!) {
+            workflowStates(filter: { team: { id: { eq: $teamId } } }) {
+              nodes { id name type }
+            }
+          }`,
+          { teamId },
+        );
+
+        const targetState = statesData.workflowStates.nodes.find(
+          (s) => s.name.toLowerCase() === update.stateName!.toLowerCase(),
+        );
+
+        if (!targetState) {
+          throw new Error(
+            `No workflow state named "${update.stateName}" found for team ${teamId}`,
+          );
+        }
+
+        await query(
+          `mutation($id: String!, $stateId: String!) {
+            issueUpdate(id: $id, input: { stateId: $stateId }) {
+              success
+            }
+          }`,
+          { id: issueUuid, stateId: targetState.id },
+        );
+      }
+
       // Handle state change
       if (update.state) {
         // Need to find the correct workflow state ID

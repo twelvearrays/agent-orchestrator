@@ -494,6 +494,8 @@ export interface IssueUpdate {
   labels?: string[];
   assignee?: string;
   comment?: string;
+  /** Workflow state name for tracker-native state transitions (e.g. "In QA") */
+  stateName?: string;
 }
 
 export interface CreateIssueInput {
@@ -850,15 +852,16 @@ export type ReactionType =
   | "agent-needs-input"
   | "agent-exited"
   | "all-complete"
-  | "hardware-test-required";
+  | "hardware-test-required"
+  | "pr-opened";
 
 /** A configured automatic reaction to an event */
 export interface ReactionConfig {
   /** Whether this reaction is enabled */
   auto: boolean;
 
-  /** What to do: send message to agent, notify human, auto-merge, or queue for hardware */
-  action: "send-to-agent" | "notify" | "auto-merge" | "queue-for-hardware";
+  /** What to do: send message to agent, notify human, auto-merge, queue for hardware, or update tracker */
+  action: "send-to-agent" | "notify" | "auto-merge" | "queue-for-hardware" | "update-tracker";
 
   /** Message to send (for send-to-agent) */
   message?: string;
@@ -874,6 +877,9 @@ export interface ReactionConfig {
 
   /** Threshold duration for time-based triggers (e.g. "10m" for stuck detection) */
   threshold?: string;
+
+  /** Tracker state name to transition to (for update-tracker action) */
+  trackerState?: string;
 
   /** Whether to include a summary in the notification */
   includeSummary?: boolean;
