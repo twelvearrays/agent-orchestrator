@@ -7,7 +7,13 @@ defaults:
   runtime: tmux
   agent: claude-code
   workspace: worktree
-  notifiers: [desktop]
+  notifiers: [desktop, ntfy]
+
+notifiers:
+  ntfy:
+    plugin: ntfy
+    topic: "ao-d0766cee8be0a0cacbb587df"
+    dashboardUrl: "https://agentflow.monster"
 
 projects:
   ao:
@@ -20,7 +26,7 @@ projects:
       plugin: github
     tracker:
       plugin: linear
-      teamId: "2a6e9b1b-19cd-4e30-b5bd-7b34dc491c7e"
+      teamId: "f65d8805-05b4-41d2-a90b-dffe27e24d0b"
     symlinks: [.claude]
     postCreate:
       - "pnpm install"
@@ -43,7 +49,61 @@ projects:
       permissions: skip
 
 reactions:
+  agent-working:
+    auto: true
+    action: update-tracker
+    trackerState: "In Progress"
+
   pr-opened:
     auto: true
     action: update-tracker
-    trackerState: "In QA"
+    trackerState: "In Review"
+
+  changes-requested:
+    auto: true
+    action: send-to-agent
+    message: >-
+      A reviewer has requested changes on your PR {{pr.url}}.
+      You MUST read every piece of reviewer feedback before making changes.
+
+
+      ## GitHub PR Review Comments
+
+      Run these commands to read ALL reviewer feedback:
+
+      1. `gh pr view {{pr.number}} --comments` — PR-level comments
+
+      2. `gh api repos/{owner}/{repo}/pulls/{{pr.number}}/reviews` — review bodies with verdicts
+
+      3. `gh api repos/{owner}/{repo}/pulls/{{pr.number}}/comments` — inline comments on specific lines
+
+
+      ## Linear Issue Notes
+
+      {{issue.comments}}
+
+
+      Address every comment from both GitHub and Linear. Push your fixes and reply to each GitHub comment confirming what you changed.
+    trackerState: "Revision"
+
+  agent-needs-input:
+    auto: true
+    action: notify
+    priority: urgent
+    trackerState: "Blocked"
+
+  agent-stuck:
+    auto: true
+    action: notify
+    priority: urgent
+    trackerState: "Blocked"
+
+  review-approved:
+    auto: true
+    action: update-tracker
+    trackerState: "Approved"
+
+  pr-merged:
+    auto: true
+    action: update-tracker
+    trackerState: "Done"

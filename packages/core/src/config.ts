@@ -24,12 +24,15 @@ import { generateSessionPrefix } from "./paths.js";
 
 const ReactionConfigSchema = z.object({
   auto: z.boolean().default(true),
-  action: z.enum(["send-to-agent", "notify", "auto-merge", "queue-for-hardware"]).default("notify"),
+  action: z
+    .enum(["send-to-agent", "notify", "auto-merge", "queue-for-hardware", "update-tracker"])
+    .default("notify"),
   message: z.string().optional(),
   priority: z.enum(["urgent", "action", "warning", "info"]).optional(),
   retries: z.number().optional(),
   escalateAfter: z.union([z.number(), z.string()]).optional(),
   threshold: z.string().optional(),
+  trackerState: z.string().optional(),
   includeSummary: z.boolean().optional(),
 });
 
@@ -303,6 +306,31 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
       auto: false,
       action: "notify",
       priority: "action",
+    },
+    "pr-opened": {
+      auto: false,
+      action: "notify",
+      priority: "info",
+    },
+    "agent-working": {
+      auto: false,
+      action: "notify",
+      priority: "info",
+    },
+    "review-pending": {
+      auto: false,
+      action: "notify",
+      priority: "info",
+    },
+    "review-approved": {
+      auto: false,
+      action: "notify",
+      priority: "info",
+    },
+    "pr-merged": {
+      auto: false,
+      action: "notify",
+      priority: "info",
     },
   };
 

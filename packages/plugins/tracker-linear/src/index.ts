@@ -13,6 +13,7 @@ import type {
   PluginModule,
   Tracker,
   Issue,
+  IssueComment,
   IssueFilters,
   IssueUpdate,
   CreateIssueInput,
@@ -426,6 +427,39 @@ function createLinearTracker(query: GraphQLTransport): Tracker {
         labels: node.labels.nodes.map((l) => l.name),
         assignee: node.assignee?.displayName ?? node.assignee?.name,
         priority: node.priority,
+      }));
+    },
+
+    async getComments(identifier: string, _project: ProjectConfig): Promise<IssueComment[]> {
+      const data = await query<{
+        issue: {
+          comments: {
+            nodes: Array<{
+              body: string;
+              user: { name: string; displayName: string } | null;
+              createdAt: string;
+            }>;
+          };
+        };
+      }>(
+        `query($id: String!) {
+          issue(id: $id) {
+            comments(first: 30, orderBy: createdAt) {
+              nodes {
+                body
+                user { name displayName }
+                createdAt
+              }
+            }
+          }
+        }`,
+        { id: identifier },
+      );
+
+      return data.issue.comments.nodes.map((c) => ({
+        author: c.user?.displayName ?? c.user?.name ?? "Unknown",
+        body: c.body,
+        createdAt: c.createdAt,
       }));
     },
 

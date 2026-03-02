@@ -467,6 +467,9 @@ export interface Tracker {
   /** Optional: update issue state */
   updateIssue?(identifier: string, update: IssueUpdate, project: ProjectConfig): Promise<void>;
 
+  /** Optional: get comments/notes on an issue */
+  getComments?(identifier: string, project: ProjectConfig): Promise<IssueComment[]>;
+
   /** Optional: create a new issue */
   createIssue?(input: CreateIssueInput, project: ProjectConfig): Promise<Issue>;
 }
@@ -496,6 +499,12 @@ export interface IssueUpdate {
   comment?: string;
   /** Workflow state name for tracker-native state transitions (e.g. "In QA") */
   stateName?: string;
+}
+
+export interface IssueComment {
+  author: string;
+  body: string;
+  createdAt: string;
 }
 
 export interface CreateIssueInput {
@@ -853,7 +862,11 @@ export type ReactionType =
   | "agent-exited"
   | "all-complete"
   | "hardware-test-required"
-  | "pr-opened";
+  | "pr-opened"
+  | "agent-working"
+  | "review-pending"
+  | "review-approved"
+  | "pr-merged";
 
 /** A configured automatic reaction to an event */
 export interface ReactionConfig {

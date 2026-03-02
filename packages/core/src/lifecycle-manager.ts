@@ -154,6 +154,14 @@ function eventToReactionKey(eventType: EventType): string | null {
       return "all-complete";
     case "pr.created":
       return "pr-opened";
+    case "session.working":
+      return "agent-working";
+    case "review.pending":
+      return "review-pending";
+    case "review.approved":
+      return "review-approved";
+    case "merge.completed":
+      return "pr-merged";
     default:
       return null;
   }
@@ -352,23 +360,57 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     // Execute the reaction action
     const action = reactionConfig.action ?? "notify";
+    let result: ReactionResult | null = null;
 
     switch (action) {
       case "send-to-agent": {
         if (reactionConfig.message) {
           try {
-            await sessionManager.send(sessionId, reactionConfig.message);
+            // Interpolate template variables
+            const session = await sessionManager.get(sessionId);
+            let message = reactionConfig.message;
+            if (session) {
+              message = message
+                .replace(/\{\{branch\}\}/g, session.branch ?? "")
+                .replace(/\{\{pr\.url\}\}/g, session.pr?.url ?? "")
+                .replace(/\{\{pr\.number\}\}/g, String(session.pr?.number ?? ""))
+                .replace(/\{\{issueId\}\}/g, session.issueId ?? "")
+                .replace(/\{\{sessionId\}\}/g, session.id);
 
-            return {
+              // Resolve {{issue.comments}} — fetch from tracker if present
+              if (message.includes("{{issue.comments}}") && session.issueId) {
+                let formatted = "";
+                try {
+                  const project = config.projects[projectId];
+                  if (project) {
+                    const trackerName = project.tracker?.plugin ?? "linear";
+                    const issueTracker = registry.get<Tracker>("tracker", trackerName);
+                    if (issueTracker?.getComments) {
+                      const comments = await issueTracker.getComments(session.issueId, project);
+                      if (comments.length > 0) {
+                        formatted = comments
+                          .map((c) => `[${c.author} — ${c.createdAt}]\n${c.body}`)
+                          .join("\n\n");
+                      }
+                    }
+                  }
+                } catch {
+                  // Best-effort — don't fail the message send
+                }
+                message = message.replace(/\{\{issue\.comments\}\}/g, formatted);
+              }
+            }
+            await sessionManager.send(sessionId, message);
+            result = {
               reactionType: reactionKey,
               success: true,
               action: "send-to-agent",
-              message: reactionConfig.message,
+              message,
               escalated: false,
             };
           } catch {
             // Send failed — allow retry on next poll cycle (don't escalate immediately)
-            return {
+            result = {
               reactionType: reactionKey,
               success: false,
               action: "send-to-agent",
@@ -387,12 +429,13 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           data: { reactionKey },
         });
         await notifyHuman(event, reactionConfig.priority ?? "info");
-        return {
+        result = {
           reactionType: reactionKey,
           success: true,
           action: "notify",
           escalated: false,
         };
+        break;
       }
 
       case "auto-merge": {
@@ -405,47 +448,60 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           data: { reactionKey },
         });
         await notifyHuman(event, "action");
-        return {
+        result = {
           reactionType: reactionKey,
           success: true,
           action: "auto-merge",
           escalated: false,
         };
+        break;
       }
 
       case "update-tracker": {
-        if (reactionConfig.trackerState && sessionId !== "system") {
-          try {
-            const session = await sessionManager.get(sessionId);
-            const project = config.projects[projectId];
-            if (session?.issueId && project) {
-              const trackerName = project.tracker?.plugin ?? "linear";
-              const tracker = registry.get<Tracker>("tracker", trackerName);
-              if (tracker?.updateIssue) {
-                await tracker.updateIssue(session.issueId, { stateName: reactionConfig.trackerState }, project);
-              }
-            }
-            return {
-              reactionType: reactionKey,
-              success: true,
-              action: "update-tracker",
-              message: reactionConfig.trackerState,
-              escalated: false,
-            };
-          } catch {
-            return {
-              reactionType: reactionKey,
-              success: false,
-              action: "update-tracker",
-              escalated: false,
-            };
-          }
-        }
+        // Pure update-tracker action — handled entirely by the side-effect below
+        result = {
+          reactionType: reactionKey,
+          success: true,
+          action: "update-tracker",
+          message: reactionConfig.trackerState,
+          escalated: false,
+        };
         break;
       }
     }
 
-    return {
+    // Tracker state side-effect: applies to ANY action when trackerState is configured.
+    // For "update-tracker" this IS the primary behavior; for other actions
+    // (send-to-agent, notify, etc.) it runs as an additional side-effect.
+    if (reactionConfig.trackerState && sessionId !== "system") {
+      try {
+        const session = await sessionManager.get(sessionId);
+        const project = config.projects[projectId];
+        if (session?.issueId && project) {
+          const trackerName = project.tracker?.plugin ?? "linear";
+          const issueTracker = registry.get<Tracker>("tracker", trackerName);
+          if (issueTracker?.updateIssue) {
+            await issueTracker.updateIssue(
+              session.issueId,
+              { stateName: reactionConfig.trackerState },
+              project,
+            );
+          }
+        }
+      } catch {
+        // Side-effect failure: only fail result for pure update-tracker action
+        if (action === "update-tracker") {
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "update-tracker",
+            escalated: false,
+          };
+        }
+      }
+    }
+
+    return result ?? {
       reactionType: reactionKey,
       success: false,
       action,
