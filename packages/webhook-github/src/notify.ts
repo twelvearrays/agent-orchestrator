@@ -40,7 +40,7 @@ export function sendNtfy(
       path: url.pathname,
       method: "POST",
       headers: {
-        "Title": `${labels.title} — ${sessionId}`,
+        "Title": `${labels.title} - ${sessionId}`,
         "Priority": labels.priority,
         "Tags": labels.tags,
         "Click": `${config.dashboardUrl}/sessions/${encodeURIComponent(sessionId)}`,

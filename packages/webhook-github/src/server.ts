@@ -52,7 +52,7 @@ app.post("/webhook/github", (req, res) => {
         return;
       }
       console.log(`[EVENT] ${eventType} → check session ${sessionId}`);
-      sendNtfy(config, eventType, action, sessionId, extracted.branch);
+      try { sendNtfy(config, eventType, action, sessionId, extracted.branch); } catch { /* silent */ }
       return signalLifecycle(sessionId);
     })
     .catch((err: unknown) => {
