@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
-
-const CONFIG_PATH = join(process.cwd(), "agent-orchestrator.yaml");
+import { findConfigFile } from "@composio/ao-core";
 
 const EVENT_FLOW = [
   { event: "pr.created", reactionKey: "pr-opened", description: "Agent opened a PR" },
@@ -20,7 +18,9 @@ const EVENT_FLOW = [
 
 export async function GET() {
   try {
-    const raw = readFileSync(CONFIG_PATH, "utf-8");
+    const configPath = findConfigFile();
+    if (!configPath) return NextResponse.json({ reactions: {}, eventFlow: EVENT_FLOW });
+    const raw = readFileSync(configPath, "utf-8");
     const config = parseYaml(raw) as Record<string, unknown>;
     const reactions = (config["reactions"] as Record<string, unknown> | undefined) ?? {};
     return NextResponse.json({ reactions, eventFlow: EVENT_FLOW });
@@ -31,11 +31,13 @@ export async function GET() {
 
 export async function PUT(request: Request) {
   try {
+    const configPath = findConfigFile();
+    if (!configPath) return NextResponse.json({ error: "No config file found" }, { status: 404 });
     const body = (await request.json()) as { reactions: Record<string, unknown> };
-    const raw = readFileSync(CONFIG_PATH, "utf-8");
+    const raw = readFileSync(configPath, "utf-8");
     const config = parseYaml(raw) as Record<string, unknown>;
     config["reactions"] = body.reactions;
-    writeFileSync(CONFIG_PATH, stringifyYaml(config), "utf-8");
+    writeFileSync(configPath, stringifyYaml(config), "utf-8");
     return NextResponse.json({ ok: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
