@@ -42,7 +42,7 @@ app.post("/webhook/github", (req, res) => {
 
   const action = (payload as Record<string, string>)["action"];
 
-  // Async: correlate + signal lifecycle manager + send notification
+  // Async: correlate + fire reaction + send notification
   correlateSession(extracted.branch, extracted.repo, config.dataDir)
     .then((sessionId) => {
       if (!sessionId) {
@@ -53,12 +53,51 @@ app.post("/webhook/github", (req, res) => {
       }
       console.log(`[EVENT] ${eventType} → check session ${sessionId}`);
       try { sendNtfy(config, eventType, action, sessionId, extracted.branch); } catch { /* silent */ }
-      return signalLifecycle(sessionId);
+      return Promise.all([
+        signalLifecycle(sessionId),
+        fireReaction(eventType, action, sessionId),
+      ]).then(() => {});
     })
     .catch((err: unknown) => {
       console.error("[ERROR] correlate/signal failed:", err);
     });
 });
+
+function fireReaction(eventType: string, action: string | undefined, sessionId: string): Promise<void> {
+  return new Promise((resolve) => {
+    const url = new URL(`${config.webUrl}/api/internal/reaction`);
+    const body = JSON.stringify({ event: eventType, action, sessionId });
+    const req = http.request(
+      {
+        hostname: url.hostname,
+        port: url.port,
+        path: url.pathname,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        },
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (chunk: Buffer) => { data += chunk.toString(); });
+        res.on("end", () => {
+          try {
+            const parsed = JSON.parse(data) as Record<string, unknown>;
+            if (parsed["ok"]) {
+              console.log(`[REACTION] ${parsed["reaction"]} → ${parsed["trackerState"]} (${parsed["issueId"]})`);
+            } else if (parsed["skipped"]) {
+              console.log(`[REACTION] skipped: ${parsed["reason"]}`);
+            }
+          } catch { /* silent */ }
+          resolve();
+        });
+      },
+    );
+    req.once("error", () => resolve()); // silent-fail
+    req.end(body);
+  });
+}
 
 function signalLifecycle(sessionId: string): Promise<void> {
   return new Promise((resolve) => {

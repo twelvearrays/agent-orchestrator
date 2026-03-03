@@ -1,6 +1,7 @@
 export interface Config {
   webhookSecret: string;
   internalUrl: string; // e.g. http://127.0.0.1:3101
+  webUrl: string; // e.g. http://127.0.0.1:3100
   dataDir: string;
   port: number;
   ntfyTopic: string | null;
@@ -16,6 +17,8 @@ export function loadConfig(): Config {
     webhookSecret,
     internalUrl:
       process.env["AO_INTERNAL_URL"] ?? "http://127.0.0.1:3101",
+    webUrl:
+      process.env["AO_WEB_URL"] ?? "http://127.0.0.1:3100",
     dataDir:
       process.env["AO_DATA_DIR"] ?? `${process.env["HOME"]}/.ao-sessions`,
     port: parseInt(process.env["PORT"] ?? "3102", 10),
