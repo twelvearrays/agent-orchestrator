@@ -485,7 +485,7 @@ function createLinearTracker(query: GraphQLTransport): Tracker {
       const issueUuid = issueData.issue.id;
       const teamId = issueData.issue.team.id;
 
-      // Handle stateName: move to a specific state by name (e.g. "In QA")
+      // Handle stateName: move to a specific state by name (e.g. "In Review")
       if (update.stateName) {
         const statesData = await query<{
           workflowStates: { nodes: Array<{ id: string; name: string; type: string }> };

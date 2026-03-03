@@ -497,7 +497,7 @@ export interface IssueUpdate {
   labels?: string[];
   assignee?: string;
   comment?: string;
-  /** Workflow state name for tracker-native state transitions (e.g. "In QA") */
+  /** Workflow state name for tracker-native state transitions (e.g. "In Review") */
   stateName?: string;
 }
 
