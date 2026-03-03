@@ -1,11 +1,18 @@
 "use client";
 
 import { useEffect, useReducer } from "react";
-import type { DashboardSession, SSESnapshotEvent } from "@/lib/types";
+import type {
+  DashboardSession,
+  SSESnapshotEvent,
+  SSESessionUpdateEvent,
+  SSESessionRemovedEvent,
+} from "@/lib/types";
 
 type Action =
   | { type: "reset"; sessions: DashboardSession[] }
-  | { type: "snapshot"; patches: SSESnapshotEvent["sessions"] };
+  | { type: "snapshot"; patches: SSESnapshotEvent["sessions"] }
+  | { type: "session-update"; patch: SSESessionUpdateEvent["session"] }
+  | { type: "session-removed"; sessionId: string };
 
 function reducer(state: DashboardSession[], action: Action): DashboardSession[] {
   switch (action.type) {
@@ -27,7 +34,40 @@ function reducer(state: DashboardSession[], action: Action): DashboardSession[] 
         changed = true;
         return { ...s, status: patch.status, activity: patch.activity, lastActivityAt: patch.lastActivityAt };
       });
+      // Check for new sessions not in current state
+      for (const patch of action.patches) {
+        if (!state.some((s) => s.id === patch.id)) {
+          changed = true;
+        }
+      }
       return changed ? next : state;
+    }
+    case "session-update": {
+      const { patch } = action;
+      const idx = state.findIndex((s) => s.id === patch.id);
+      if (idx === -1) {
+        // New session — we don't have full DashboardSession data from this event,
+        // so we can't add it. The next snapshot poll will pick it up.
+        return state;
+      }
+      const existing = state[idx];
+      if (
+        existing.status === patch.status &&
+        existing.activity === patch.activity &&
+        existing.lastActivityAt === patch.lastActivityAt
+      ) {
+        return state;
+      }
+      const updated = [
+        ...state.slice(0, idx),
+        { ...existing, status: patch.status, activity: patch.activity, lastActivityAt: patch.lastActivityAt },
+        ...state.slice(idx + 1),
+      ];
+      return updated;
+    }
+    case "session-removed": {
+      const filtered = state.filter((s) => s.id !== action.sessionId);
+      return filtered.length === state.length ? state : filtered;
     }
   }
 }
@@ -46,9 +86,22 @@ export function useSessionEvents(initialSessions: DashboardSession[]): Dashboard
     es.onmessage = (event: MessageEvent) => {
       try {
         const data = JSON.parse(event.data as string) as { type: string };
-        if (data.type === "snapshot") {
-          const snapshot = data as SSESnapshotEvent;
-          dispatch({ type: "snapshot", patches: snapshot.sessions });
+        switch (data.type) {
+          case "snapshot": {
+            const snapshot = data as SSESnapshotEvent;
+            dispatch({ type: "snapshot", patches: snapshot.sessions });
+            break;
+          }
+          case "session-update": {
+            const update = data as SSESessionUpdateEvent;
+            dispatch({ type: "session-update", patch: update.session });
+            break;
+          }
+          case "session-removed": {
+            const removed = data as SSESessionRemovedEvent;
+            dispatch({ type: "session-removed", sessionId: removed.sessionId });
+            break;
+          }
         }
       } catch {
         // Ignore malformed messages

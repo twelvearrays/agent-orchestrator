@@ -8,6 +8,8 @@ import { cn } from "@/lib/cn";
 import { CICheckList } from "./CIBadge";
 import { DirectTerminal } from "./DirectTerminal";
 import { ActivityDot } from "./ActivityDot";
+import { MiniPipelineStrip } from "./PipelineStrip";
+import { FloatingActions } from "./FloatingActions";
 
 interface OrchestratorZones {
   merge: number;
@@ -197,6 +199,34 @@ export function SessionDetail({ session, isOrchestrator = false, orchestratorZon
     ? "calc(100vh - 240px)"
     : "max(440px, calc(100vh - 440px))";
 
+  const handleMerge = async () => {
+    if (!pr) return;
+    const res = await fetch(`/api/prs/${pr.number}/merge`, { method: "POST" });
+    if (!res.ok) console.error(`Failed to merge PR #${pr.number}:`, await res.text());
+  };
+
+  const handleKill = async () => {
+    if (!confirm(`Kill session ${session.id}?`)) return;
+    const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/kill`, { method: "POST" });
+    if (!res.ok) console.error(`Failed to kill ${session.id}:`, await res.text());
+  };
+
+  const handleRestore = async () => {
+    if (!confirm(`Restore session ${session.id}?`)) return;
+    const res = await fetch(`/api/sessions/${encodeURIComponent(session.id)}/restore`, { method: "POST" });
+    if (!res.ok) console.error(`Failed to restore ${session.id}:`, await res.text());
+  };
+
+  const handleSendMessage = () => {
+    const message = prompt("Send message to agent:");
+    if (!message) return;
+    fetch(`/api/sessions/${encodeURIComponent(session.id)}/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    }).catch((err) => console.error("Failed to send message:", err));
+  };
+
   return (
     <div className="min-h-screen bg-[var(--color-bg-base)]">
       {/* Nav bar — glass effect */}
@@ -209,7 +239,7 @@ export function SessionDetail({ session, isOrchestrator = false, orchestratorZon
             <svg className="h-3 w-3 opacity-60" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
               <path d="M15 18l-6-6 6-6" />
             </svg>
-            Orchestrator
+            Dashboard
           </a>
           <span className="text-[var(--color-border-strong)]">/</span>
           <span className="font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]">
@@ -226,6 +256,11 @@ export function SessionDetail({ session, isOrchestrator = false, orchestratorZon
             >
               orchestrator
             </span>
+          )}
+          <div className="flex-1" />
+          {/* Mini pipeline position */}
+          {!isOrchestrator && (
+            <MiniPipelineStrip session={session} />
           )}
         </div>
       </nav>
@@ -375,6 +410,17 @@ export function SessionDetail({ session, isOrchestrator = false, orchestratorZon
           />
         </div>
       </div>
+
+      {/* Floating action bar */}
+      {!isOrchestrator && (
+        <FloatingActions
+          session={session}
+          onMerge={handleMerge}
+          onKill={handleKill}
+          onRestore={handleRestore}
+          onSendMessage={handleSendMessage}
+        />
+      )}
     </div>
   );
 }

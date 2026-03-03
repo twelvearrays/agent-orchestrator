@@ -1,19 +1,31 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import {
   type DashboardSession,
   type DashboardStats,
   type DashboardPR,
   type AttentionLevel,
+  type ViewMode,
+  type Command,
   getAttentionLevel,
   isPRRateLimited,
 } from "@/lib/types";
+import { type PipelineStage, getPipelineStage } from "@/lib/pipeline";
 import { CI_STATUS } from "@composio/ao-core/types";
 import { AttentionZone } from "./AttentionZone";
 import { PRTableRow } from "./PRStatus";
 import { DynamicFavicon } from "./DynamicFavicon";
+import { PipelineStrip } from "./PipelineStrip";
+import { MetricsBar } from "./MetricsBar";
+import { CommandPalette } from "./CommandPalette";
+import { SpawnDialog } from "./SpawnDialog";
+import { ViewToggle } from "./ViewToggle";
+import { SessionRow } from "./SessionRow";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
+import { useCommandPalette } from "@/hooks/useCommandPalette";
+import { useKeyboardNavigation } from "@/hooks/useKeyboardNavigation";
 
 interface DashboardProps {
   initialSessions: DashboardSession[];
@@ -22,11 +34,24 @@ interface DashboardProps {
   projectName?: string;
 }
 
-const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
+const BOARD_LEVELS: AttentionLevel[] = ["merge", "respond", "review", "pending", "working", "done"];
 
-export function Dashboard({ initialSessions, stats, orchestratorId, projectName }: DashboardProps) {
+export function Dashboard({ initialSessions, stats: _stats, orchestratorId, projectName }: DashboardProps) {
+  const router = useRouter();
   const sessions = useSessionEvents(initialSessions);
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
+  const [view, setView] = useState<ViewMode>("board");
+  const [pipelineFilter, setPipelineFilter] = useState<PipelineStage | null>(null);
+  const [spawnOpen, setSpawnOpen] = useState(false);
+  const palette = useCommandPalette();
+
+  // ── Filter sessions by pipeline stage ──────────────────────────────
+  const filteredSessions = useMemo(() => {
+    if (!pipelineFilter) return sessions;
+    return sessions.filter((s) => getPipelineStage(s) === pipelineFilter);
+  }, [sessions, pipelineFilter]);
+
+  // ── Group by attention level ───────────────────────────────────────
   const grouped = useMemo(() => {
     const zones: Record<AttentionLevel, DashboardSession[]> = {
       merge: [],
@@ -36,12 +61,22 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName 
       working: [],
       done: [],
     };
-    for (const session of sessions) {
+    for (const session of filteredSessions) {
       zones[getAttentionLevel(session)].push(session);
     }
     return zones;
-  }, [sessions]);
+  }, [filteredSessions]);
 
+  // ── Flat list for list view + keyboard nav ─────────────────────────
+  const flatSessions = useMemo(() => {
+    const result: DashboardSession[] = [];
+    for (const level of BOARD_LEVELS) {
+      result.push(...grouped[level]);
+    }
+    return result;
+  }, [grouped]);
+
+  // ── Open PRs for table ─────────────────────────────────────────────
   const openPRs = useMemo(() => {
     return sessions
       .filter((s): s is DashboardSession & { pr: DashboardPR } => s.pr?.state === "open")
@@ -49,6 +84,7 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName 
       .sort((a, b) => mergeScore(a) - mergeScore(b));
   }, [sessions]);
 
+  // ── Actions ────────────────────────────────────────────────────────
   const handleSend = async (sessionId: string, message: string) => {
     const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/send`, {
       method: "POST",
@@ -87,189 +123,392 @@ export function Dashboard({ initialSessions, stats, orchestratorId, projectName 
     }
   };
 
-  const hasKanbanSessions = KANBAN_LEVELS.some((l) => grouped[l].length > 0);
+  // ── Keyboard navigation ────────────────────────────────────────────
+  const handleSelectSession = useCallback(
+    (index: number) => {
+      const session = flatSessions[index];
+      if (session) {
+        router.push(`/sessions/${encodeURIComponent(session.id)}`);
+      }
+    },
+    [flatSessions, router],
+  );
+
+  const handleKeyAction = useCallback(
+    (key: string, index: number) => {
+      const session = flatSessions[index];
+      if (!session) return;
+      if (key === "m" && session.pr?.mergeability.mergeable && session.pr.state === "open") {
+        handleMerge(session.pr.number);
+      } else if (key === "x") {
+        handleKill(session.id);
+      }
+    },
+    [flatSessions],
+  );
+
+  const { selectedIndex } = useKeyboardNavigation({
+    itemCount: flatSessions.length,
+    onSelect: handleSelectSession,
+    onAction: handleKeyAction,
+    enabled: !palette.isOpen && !spawnOpen,
+  });
+
+  const selectedSessionId = selectedIndex >= 0 ? flatSessions[selectedIndex]?.id ?? null : null;
+
+  // ── Command palette commands ───────────────────────────────────────
+  const commands = useMemo<Command[]>(() => {
+    const cmds: Command[] = [
+      {
+        id: "spawn",
+        label: "Spawn agent",
+        shortcut: "\u2318N",
+        section: "actions",
+        icon: "+",
+        action: () => setSpawnOpen(true),
+      },
+      {
+        id: "settings",
+        label: "Settings",
+        shortcut: "\u2318,",
+        section: "navigation",
+        icon: "\u2699",
+        action: () => router.push("/settings"),
+      },
+      {
+        id: "toggle-view",
+        label: `Switch to ${view === "board" ? "list" : "board"} view`,
+        shortcut: "\u2318\\",
+        section: "navigation",
+        icon: view === "board" ? "\u2261" : "\u25a6",
+        action: () => setView(view === "board" ? "list" : "board"),
+      },
+    ];
+
+    if (orchestratorId) {
+      cmds.push({
+        id: "orchestrator",
+        label: "Go to orchestrator",
+        shortcut: "\u2318O",
+        section: "navigation",
+        icon: "\u25c9",
+        action: () => router.push(`/sessions/${encodeURIComponent(orchestratorId)}`),
+      });
+    }
+
+    // Session jump commands
+    for (const session of sessions.slice(0, 20)) {
+      cmds.push({
+        id: `session-${session.id}`,
+        label: `${session.id}`,
+        section: "sessions",
+        action: () => router.push(`/sessions/${encodeURIComponent(session.id)}`),
+      });
+    }
+
+    return cmds;
+  }, [sessions, orchestratorId, view, router]);
+
+  // ── Global shortcuts ───────────────────────────────────────────────
+  useGlobalShortcuts({
+    onSpawn: () => setSpawnOpen(true),
+    onSettings: () => router.push("/settings"),
+    onOrchestrator: orchestratorId
+      ? () => router.push(`/sessions/${encodeURIComponent(orchestratorId)}`)
+      : undefined,
+    onToggleView: () => setView((v) => (v === "board" ? "list" : "board")),
+    enabled: !palette.isOpen && !spawnOpen,
+  });
 
   const anyRateLimited = useMemo(
     () => sessions.some((s) => s.pr && isPRRateLimited(s.pr)),
     [sessions],
   );
 
+  const hasActiveSessions = BOARD_LEVELS.slice(0, -1).some((l) => grouped[l].length > 0);
+
   return (
-    <div className="px-8 py-7">
+    <div className="min-h-screen flex flex-col">
       <DynamicFavicon sessions={sessions} projectName={projectName} />
-      {/* Header */}
-      <div className="mb-8 flex items-center justify-between border-b border-[var(--color-border-subtle)] pb-6">
-        <div className="flex items-center gap-6">
-          <h1 className="text-[17px] font-semibold tracking-[-0.02em] text-[var(--color-text-primary)]">
-            Orchestrator
-          </h1>
-          <StatusLine stats={stats} />
+      <CommandPalette isOpen={palette.isOpen} onClose={palette.close} commands={commands} />
+      <SpawnDialog isOpen={spawnOpen} onClose={() => setSpawnOpen(false)} />
+
+      {/* ── Zone 1: Command Bar + Metrics (sticky) ────────────────── */}
+      <header className="nav-glass sticky top-0 z-30 border-b border-[var(--color-border-subtle)]">
+        <div className="px-6 py-3 sm:px-8">
+          <div className="flex items-center gap-4">
+            {/* Logo + project */}
+            <div className="flex items-center gap-3">
+              <h1 className="text-[15px] font-semibold tracking-[-0.02em] text-[var(--color-text-primary)]">
+                {projectName || "ao"}
+              </h1>
+            </div>
+
+            {/* Metrics */}
+            <div className="hidden sm:block">
+              <MetricsBar sessions={sessions} />
+            </div>
+
+            <div className="flex-1" />
+
+            {/* Actions */}
+            <div className="flex items-center gap-2">
+              {/* Command palette trigger */}
+              <button
+                onClick={palette.toggle}
+                className="flex items-center gap-1.5 rounded-[6px] border border-[var(--color-border-default)] bg-[var(--color-bg-subtle)] px-2.5 py-1.5 text-[11px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-secondary)]"
+              >
+                <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="M21 21l-4.35-4.35" />
+                </svg>
+                <span className="hidden sm:inline">Search</span>
+                <kbd className="ml-1 rounded border border-[var(--color-border-subtle)] px-1 py-0 text-[9px]">{"\u2318"}K</kbd>
+              </button>
+
+              {/* Settings */}
+              <a
+                href="/settings"
+                className="flex items-center gap-1.5 rounded-[6px] px-2.5 py-1.5 text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:no-underline transition-colors"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              </a>
+
+              {/* Orchestrator */}
+              {orchestratorId && (
+                <a
+                  href={`/sessions/${encodeURIComponent(orchestratorId)}`}
+                  className="orchestrator-btn flex items-center gap-2 rounded-[7px] px-3 py-1.5 text-[11px] font-semibold hover:no-underline"
+                >
+                  <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] opacity-80" />
+                  orchestrator
+                </a>
+              )}
+            </div>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <a
-            href="/settings"
-            className="flex items-center gap-1.5 rounded-[7px] px-3 py-2 text-[12px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:no-underline transition-colors"
-          >
-            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-              <circle cx="12" cy="12" r="3" />
-            </svg>
-            Settings
-          </a>
-          {orchestratorId && (
-            <a
-              href={`/sessions/${encodeURIComponent(orchestratorId)}`}
-              className="orchestrator-btn flex items-center gap-2 rounded-[7px] px-4 py-2 text-[12px] font-semibold hover:no-underline"
-            >
-              <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] opacity-80" />
-              orchestrator
-              <svg className="h-3 w-3 opacity-70" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
-              </svg>
-            </a>
-          )}
-        </div>
+      </header>
+
+      {/* ── Zone 2: Pipeline Strip ────────────────────────────────── */}
+      <div className="border-b border-[var(--color-border-subtle)] px-6 py-3 sm:px-8">
+        <PipelineStrip
+          sessions={sessions}
+          activeFilter={pipelineFilter}
+          onFilterStage={setPipelineFilter}
+        />
       </div>
 
-      {/* Rate limit notice */}
+      {/* ── Rate limit notice ─────────────────────────────────────── */}
       {anyRateLimited && !rateLimitDismissed && (
-        <div className="mb-6 flex items-center gap-2.5 rounded border border-[rgba(245,158,11,0.25)] bg-[rgba(245,158,11,0.05)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-attention)]">
-          <svg className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-            <circle cx="12" cy="12" r="10" />
-            <path d="M12 8v4M12 16h.01" />
-          </svg>
-          <span className="flex-1">
-            GitHub API rate limited — PR data (CI status, review state, sizes) may be stale.
-            {" "}Will retry automatically on next refresh.
-          </span>
-          <button
-            onClick={() => setRateLimitDismissed(true)}
-            className="ml-1 shrink-0 opacity-60 hover:opacity-100"
-            aria-label="Dismiss"
-          >
-            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <path d="M18 6 6 18M6 6l12 12" />
+        <div className="mx-6 mt-4 sm:mx-8">
+          <div className="flex items-center gap-2.5 rounded border border-[rgba(245,158,11,0.25)] bg-[rgba(245,158,11,0.05)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-attention)]">
+            <svg className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 8v4M12 16h.01" />
             </svg>
-          </button>
+            <span className="flex-1">
+              GitHub API rate limited — PR data may be stale. Will retry automatically.
+            </span>
+            <button
+              onClick={() => setRateLimitDismissed(true)}
+              className="ml-1 shrink-0 opacity-60 hover:opacity-100"
+              aria-label="Dismiss"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
       )}
 
-      {/* Kanban columns for active zones */}
-      {hasKanbanSessions && (
-        <div className="mb-8 flex gap-4 overflow-x-auto pb-2">
-          {KANBAN_LEVELS.map((level) =>
-            grouped[level].length > 0 ? (
-              <div key={level} className="min-w-[200px] flex-1">
-                <AttentionZone
-                  level={level}
-                  sessions={grouped[level]}
-                  variant="column"
+      {/* ── Zone 3: Session List (scrollable) ─────────────────────── */}
+      <main className="flex-1 px-6 py-5 sm:px-8">
+        {/* View toggle + filter indicator */}
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <ViewToggle view={view} onChange={setView} />
+            {pipelineFilter && (
+              <button
+                onClick={() => setPipelineFilter(null)}
+                className="flex items-center gap-1 rounded-full border border-[var(--color-border-default)] bg-[var(--color-bg-subtle)] px-2.5 py-1 text-[10px] font-medium text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-border-strong)]"
+              >
+                Filtered: {pipelineFilter}
+                <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+          <span className="text-[11px] text-[var(--color-text-muted)]">
+            {filteredSessions.length} session{filteredSessions.length !== 1 ? "s" : ""}
+            {pipelineFilter ? ` in ${pipelineFilter}` : ""}
+          </span>
+        </div>
+
+        {/* Board view */}
+        {view === "board" && (
+          <>
+            {hasActiveSessions && (
+              <div className="space-y-0">
+                {BOARD_LEVELS.slice(0, -1).map((level) =>
+                  grouped[level].length > 0 ? (
+                    <AttentionZone
+                      key={level}
+                      level={level}
+                      sessions={grouped[level]}
+                      variant="row"
+                      selectedSessionId={selectedSessionId}
+                      onSend={handleSend}
+                      onKill={handleKill}
+                      onMerge={handleMerge}
+                      onRestore={handleRestore}
+                    />
+                  ) : null,
+                )}
+              </div>
+            )}
+            {grouped.done.length > 0 && (
+              <AttentionZone
+                level="done"
+                sessions={grouped.done}
+                variant="grid"
+                selectedSessionId={selectedSessionId}
+                onSend={handleSend}
+                onKill={handleKill}
+                onMerge={handleMerge}
+                onRestore={handleRestore}
+              />
+            )}
+          </>
+        )}
+
+        {/* List view */}
+        {view === "list" && (
+          <div className="rounded-[8px] border border-[var(--color-border-default)] overflow-hidden">
+            {/* Table header */}
+            <div className="flex items-center gap-3 border-b border-[var(--color-border-default)] bg-[var(--color-bg-subtle)] px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+              <span className="w-[14px]" />
+              <span className="w-[80px]">ID</span>
+              <span className="flex-1">Title</span>
+              <span className="w-[56px] text-center">Stage</span>
+              <span className="w-[40px] text-center">PR</span>
+              <span className="w-[20px] text-center">CI</span>
+              <span className="w-[20px] text-center">Rev</span>
+              <span className="w-[32px] text-right">Time</span>
+              <span className="w-[60px]" />
+            </div>
+            {flatSessions.length === 0 ? (
+              <div className="px-4 py-8 text-center text-[13px] text-[var(--color-text-muted)]">
+                No sessions{pipelineFilter ? ` in ${pipelineFilter} stage` : ""}
+              </div>
+            ) : (
+              flatSessions.map((session, i) => (
+                <SessionRow
+                  key={session.id}
+                  session={session}
+                  isSelected={i === selectedIndex}
                   onSend={handleSend}
                   onKill={handleKill}
                   onMerge={handleMerge}
                   onRestore={handleRestore}
                 />
-              </div>
-            ) : null,
-          )}
-        </div>
-      )}
-
-      {/* Done — full-width grid below Kanban */}
-      {grouped.done.length > 0 && (
-        <div className="mb-8">
-          <AttentionZone
-            level="done"
-            sessions={grouped.done}
-            variant="grid"
-            onSend={handleSend}
-            onKill={handleKill}
-            onMerge={handleMerge}
-            onRestore={handleRestore}
-          />
-        </div>
-      )}
-
-      {/* PR Table */}
-      {openPRs.length > 0 && (
-        <div className="mx-auto max-w-[900px]">
-          <h2 className="mb-3 px-1 text-[10px] font-bold uppercase tracking-[0.10em] text-[var(--color-text-tertiary)]">
-            Pull Requests
-          </h2>
-          <div className="overflow-hidden rounded-[6px] border border-[var(--color-border-default)]">
-            <table className="w-full border-collapse">
-              <thead>
-                <tr className="border-b border-[var(--color-border-muted)]">
-                  <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-                    PR
-                  </th>
-                  <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-                    Title
-                  </th>
-                  <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-                    Size
-                  </th>
-                  <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-                    CI
-                  </th>
-                  <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-                    Review
-                  </th>
-                  <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-                    Unresolved
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {openPRs.map((pr) => (
-                  <PRTableRow key={pr.number} pr={pr} />
-                ))}
-              </tbody>
-            </table>
+              ))
+            )}
           </div>
-        </div>
-      )}
+        )}
+
+        {/* PR Table */}
+        {openPRs.length > 0 && (
+          <div className="mx-auto mt-8 max-w-[900px]">
+            <h2 className="mb-3 px-1 text-[10px] font-bold uppercase tracking-[0.10em] text-[var(--color-text-tertiary)]">
+              Pull Requests
+            </h2>
+            <div className="overflow-hidden rounded-[6px] border border-[var(--color-border-default)]">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="border-b border-[var(--color-border-muted)]">
+                    <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                      PR
+                    </th>
+                    <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                      Title
+                    </th>
+                    <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                      Size
+                    </th>
+                    <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                      CI
+                    </th>
+                    <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                      Review
+                    </th>
+                    <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                      Unresolved
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {openPRs.map((pr) => (
+                    <PRTableRow key={pr.number} pr={pr} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </main>
     </div>
   );
 }
 
-function StatusLine({ stats }: { stats: DashboardStats }) {
-  if (stats.totalSessions === 0) {
-    return <span className="text-[13px] text-[var(--color-text-muted)]">no sessions</span>;
-  }
+// ── Global shortcuts hook ──────────────────────────────────────────────
 
-  const parts: Array<{ value: number; label: string; color?: string }> = [
-    { value: stats.totalSessions, label: "sessions" },
-    ...(stats.workingSessions > 0
-      ? [{ value: stats.workingSessions, label: "active", color: "var(--color-status-working)" }]
-      : []),
-    ...(stats.openPRs > 0 ? [{ value: stats.openPRs, label: "PRs" }] : []),
-    ...(stats.needsReview > 0
-      ? [{ value: stats.needsReview, label: "need review", color: "var(--color-status-attention)" }]
-      : []),
-  ];
+function useGlobalShortcuts({
+  onSpawn,
+  onSettings,
+  onOrchestrator,
+  onToggleView,
+  enabled,
+}: {
+  onSpawn: () => void;
+  onSettings: () => void;
+  onOrchestrator?: () => void;
+  onToggleView: () => void;
+  enabled: boolean;
+}) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!enabled) return;
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
+        return;
+      }
 
-  return (
-    <div className="flex items-baseline gap-0.5">
-      {parts.map((p, i) => (
-        <span key={p.label} className="flex items-baseline">
-          {i > 0 && (
-            <span className="mx-3 text-[11px] text-[var(--color-border-strong)]">·</span>
-          )}
-          <span
-            className="text-[20px] font-bold tabular-nums tracking-tight"
-            style={{ color: p.color ?? "var(--color-text-primary)" }}
-          >
-            {p.value}
-          </span>
-          <span className="ml-1.5 text-[11px] text-[var(--color-text-muted)]">
-            {p.label}
-          </span>
-        </span>
-      ))}
-    </div>
-  );
+      if ((e.metaKey || e.ctrlKey) && e.key === "n") {
+        e.preventDefault();
+        onSpawn();
+      } else if ((e.metaKey || e.ctrlKey) && e.key === ",") {
+        e.preventDefault();
+        onSettings();
+      } else if ((e.metaKey || e.ctrlKey) && e.key === "o" && onOrchestrator) {
+        e.preventDefault();
+        onOrchestrator();
+      } else if ((e.metaKey || e.ctrlKey) && e.key === "\\") {
+        e.preventDefault();
+        onToggleView();
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onSpawn, onSettings, onOrchestrator, onToggleView, enabled]);
 }
+
+// ── PR merge scoring ────────────────────────────────────────────────────
 
 function mergeScore(
   pr: Pick<DashboardPR, "ciStatus" | "reviewDecision" | "mergeability" | "unresolvedThreads">,

@@ -127,6 +127,39 @@ export interface DashboardStats {
   needsReview: number;
 }
 
+/** Pipeline stage type */
+export type PipelineStage =
+  | "spawning"
+  | "working"
+  | "pr_open"
+  | "ci"
+  | "review"
+  | "mergeable"
+  | "done";
+
+/** Metrics snapshot interface */
+export interface MetricsSnapshot {
+  activeAgents: number;
+  totalAgents: number;
+  openPRs: number;
+  mergedToday: number;
+  medianTimeToMerge: number | null;
+  timestamp: number;
+}
+
+/** Command for the command palette */
+export interface Command {
+  id: string;
+  label: string;
+  shortcut?: string;
+  section: "actions" | "navigation" | "sessions";
+  icon?: string;
+  action: () => void;
+}
+
+/** View mode for dashboard */
+export type ViewMode = "board" | "list";
+
 /** SSE snapshot event from /api/events */
 export interface SSESnapshotEvent {
   type: "snapshot";
@@ -147,6 +180,24 @@ export interface SSEActivityEvent {
   status: SessionStatus;
   attentionLevel: AttentionLevel;
   timestamp: string;
+}
+
+/** SSE targeted session update event from /api/events (file-watcher driven) */
+export interface SSESessionUpdateEvent {
+  type: "session-update";
+  session: {
+    id: string;
+    status: SessionStatus;
+    activity: ActivityState | null;
+    attentionLevel: AttentionLevel;
+    lastActivityAt: string;
+  };
+}
+
+/** SSE session removed event from /api/events (file-watcher driven) */
+export interface SSESessionRemovedEvent {
+  type: "session-removed";
+  sessionId: string;
 }
 
 /**

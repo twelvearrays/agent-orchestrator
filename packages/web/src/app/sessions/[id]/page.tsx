@@ -1,9 +1,14 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import { SessionDetail } from "@/components/SessionDetail";
-import { type DashboardSession, getAttentionLevel, type AttentionLevel } from "@/lib/types";
+import {
+  type DashboardSession,
+  type SSESessionUpdateEvent,
+  getAttentionLevel,
+  type AttentionLevel,
+} from "@/lib/types";
 import { activityIcon } from "@/lib/activity-icons";
 
 function truncate(s: string, max: number): string {
@@ -99,6 +104,9 @@ export default function SessionPage() {
     }
   }, [isOrchestrator]);
 
+  // Track whether a fetch is already in flight to avoid duplicate requests
+  const fetchInFlight = useRef(false);
+
   // Initial fetch — session first, zone counts after (avoids blocking on slow /api/sessions)
   useEffect(() => {
     fetchSession();
@@ -107,12 +115,43 @@ export default function SessionPage() {
     return () => clearTimeout(t);
   }, [fetchSession, fetchZoneCounts]);
 
-  // Poll every 5s
+  // SSE subscription: refetch this session when file watcher detects a change
+  useEffect(() => {
+    const es = new EventSource("/api/events");
+
+    es.onmessage = (event: MessageEvent) => {
+      try {
+        const data = JSON.parse(event.data as string) as { type: string };
+        if (data.type === "session-update") {
+          const update = data as SSESessionUpdateEvent;
+          if (update.session.id === id && !fetchInFlight.current) {
+            fetchInFlight.current = true;
+            fetchSession().finally(() => {
+              fetchInFlight.current = false;
+            });
+          }
+        }
+      } catch {
+        // Ignore malformed messages
+      }
+    };
+
+    es.onerror = () => {
+      // EventSource auto-reconnects
+    };
+
+    return () => {
+      es.close();
+    };
+  }, [id, fetchSession]);
+
+  // 30s fallback poll: catches PR data, zone counts, and any changes
+  // the file watcher might miss (e.g. JSONL activity transitions)
   useEffect(() => {
     const interval = setInterval(() => {
       fetchSession();
       fetchZoneCounts();
-    }, 5000);
+    }, 30_000);
     return () => clearInterval(interval);
   }, [fetchSession, fetchZoneCounts]);
 

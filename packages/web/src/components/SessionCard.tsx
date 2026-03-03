@@ -12,12 +12,14 @@ import {
 import { CI_STATUS } from "@composio/ao-core/types";
 import { cn } from "@/lib/cn";
 import { getSessionTitle } from "@/lib/format";
+import { getPipelineStage, getStageConfig } from "@/lib/pipeline";
 import { PRStatus } from "./PRStatus";
 import { CICheckList } from "./CIBadge";
 import { ActivityDot } from "./ActivityDot";
 
 interface SessionCardProps {
   session: DashboardSession;
+  isSelected?: boolean;
   onSend?: (sessionId: string, message: string) => void;
   onKill?: (sessionId: string) => void;
   onMerge?: (prNumber: number) => void;
@@ -33,7 +35,7 @@ const borderColorByLevel: Record<AttentionLevel, string> = {
   done:    "border-l-[var(--color-border-default)]",
 };
 
-export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: SessionCardProps) {
+export function SessionCard({ session, isSelected, onSend, onKill, onMerge, onRestore }: SessionCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [sendingAction, setSendingAction] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -60,6 +62,8 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
   const isRestorable = isTerminal && session.status !== "merged";
 
   const title = getSessionTitle(session);
+  const pipelineStage = getPipelineStage(session);
+  const stageConfig = getStageConfig(pipelineStage);
 
   return (
     <div
@@ -71,6 +75,7 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
           ? "card-merge-ready border-[rgba(63,185,80,0.3)]"
           : "border-[var(--color-border-default)]",
         expanded && "border-[var(--color-border-strong)]",
+        isSelected && "ring-2 ring-[var(--color-focus-ring)] ring-offset-1 ring-offset-[var(--color-bg-base)]",
         pr?.state === "merged" && "opacity-55",
       )}
       style={{
@@ -122,8 +127,17 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
         </p>
       </div>
 
-      {/* Meta row: branch + PR pills */}
+      {/* Meta row: pipeline chip + branch + PR pills */}
       <div className="flex flex-wrap items-center gap-1.5 px-4 pb-2.5">
+        <span
+          className="rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider"
+          style={{
+            color: stageConfig.color,
+            background: `color-mix(in srgb, ${stageConfig.color} 12%, transparent)`,
+          }}
+        >
+          {stageConfig.label}
+        </span>
         {session.branch && (
           <span className="font-[var(--font-mono)] text-[10px] text-[var(--color-text-muted)]">
             {session.branch}
