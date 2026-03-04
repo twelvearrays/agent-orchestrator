@@ -624,6 +624,34 @@ function createLinearTracker(query: GraphQLTransport): Tracker {
         );
       }
 
+      // Handle label removal
+      if (update.removeLabels && update.removeLabels.length > 0) {
+        const currentData = await query<{
+          issue: { labels: { nodes: Array<{ id: string; name: string }> } };
+        }>(
+          `query($id: String!) {
+            issue(id: $id) {
+              labels { nodes { id name } }
+            }
+          }`,
+          { id: issueUuid },
+        );
+        const currentLabelNodes = currentData.issue.labels.nodes;
+        const removeNames = new Set(update.removeLabels.map((n) => n.toLowerCase()));
+        const keepIds = currentLabelNodes
+          .filter((l) => !removeNames.has(l.name.toLowerCase()))
+          .map((l) => l.id);
+
+        await query(
+          `mutation($id: String!, $labelIds: [String!]!) {
+            issueUpdate(id: $id, input: { labelIds: $labelIds }) {
+              success
+            }
+          }`,
+          { id: issueUuid, labelIds: keepIds },
+        );
+      }
+
       // Handle comment
       if (update.comment) {
         await query(

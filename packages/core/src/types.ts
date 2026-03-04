@@ -530,6 +530,8 @@ export interface IssueFilters {
 export interface IssueUpdate {
   state?: "open" | "in_progress" | "closed";
   labels?: string[];
+  /** Labels to remove from the issue */
+  removeLabels?: string[];
   assignee?: string;
   comment?: string;
   /** Workflow state name for tracker-native state transitions (e.g. "In Review") */
