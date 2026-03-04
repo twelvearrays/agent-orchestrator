@@ -501,21 +501,94 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       }
 
       case "auto-merge": {
-        // Auto-merge is handled by the SCM plugin
-        // For now, just notify
-        const event = createEvent("reaction.triggered", {
-          sessionId,
-          projectId,
-          message: `Reaction '${reactionKey}' triggered auto-merge`,
-          data: { reactionKey },
-        });
-        await notifyHuman(event, "action");
-        result = {
-          reactionType: reactionKey,
-          success: true,
-          action: "auto-merge",
-          escalated: false,
-        };
+        try {
+          const session = await sessionManager.get(sessionId);
+          if (!session?.pr) {
+            const event = createEvent("reaction.triggered", {
+              sessionId,
+              projectId,
+              message: `Auto-merge skipped: session has no PR`,
+              data: { reactionKey },
+            });
+            await notifyHuman(event, "warning");
+            result = {
+              reactionType: reactionKey,
+              success: false,
+              action: "auto-merge",
+              escalated: false,
+            };
+            break;
+          }
+
+          const project = config.projects[projectId];
+          const scmName = project?.scm?.plugin ?? "github";
+          const scm = registry.get<SCM>("scm", scmName);
+          if (!scm) {
+            const event = createEvent("reaction.triggered", {
+              sessionId,
+              projectId,
+              message: `Auto-merge failed: no SCM plugin '${scmName}'`,
+              data: { reactionKey },
+            });
+            await notifyHuman(event, "warning");
+            result = {
+              reactionType: reactionKey,
+              success: false,
+              action: "auto-merge",
+              escalated: false,
+            };
+            break;
+          }
+
+          const mergeability = await scm.getMergeability(session.pr);
+          if (!mergeability.mergeable) {
+            const event = createEvent("reaction.triggered", {
+              sessionId,
+              projectId,
+              message: `Auto-merge blocked: ${mergeability.blockers?.join(", ") ?? "not mergeable"}`,
+              data: { reactionKey, blockers: mergeability.blockers },
+            });
+            await notifyHuman(event, "warning");
+            result = {
+              reactionType: reactionKey,
+              success: false,
+              action: "auto-merge",
+              escalated: false,
+            };
+            break;
+          }
+
+          await scm.mergePR(session.pr, "squash");
+
+          const event = createEvent("merge.completed", {
+            sessionId,
+            projectId,
+            message: `Auto-merged PR #${session.pr.number} via squash`,
+            data: { reactionKey, prNumber: session.pr.number },
+          });
+          await notifyHuman(event, "info");
+          result = {
+            reactionType: reactionKey,
+            success: true,
+            action: "auto-merge",
+            escalated: false,
+          };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Unknown error";
+          const event = createEvent("reaction.triggered", {
+            sessionId,
+            projectId,
+            message: `Auto-merge failed: ${message}`,
+            data: { reactionKey, error: message },
+          });
+          await notifyHuman(event, "warning");
+          result = {
+            reactionType: reactionKey,
+            success: false,
+            action: "auto-merge",
+            escalated: false,
+          };
+        }
         break;
       }
 

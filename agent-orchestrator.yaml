@@ -120,6 +120,10 @@ reactions:
     action: update-tracker
     trackerState: "Approved"
 
+  approved-and-green:
+    auto: true
+    action: auto-merge
+
   pr-merged:
     auto: true
     action: update-tracker

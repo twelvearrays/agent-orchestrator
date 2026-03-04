@@ -5,13 +5,18 @@ import type { Tracker } from "@composio/ao-core";
 /**
  * Map GitHub webhook event+action to reaction config key.
  * Mirrors the lifecycle-manager's eventToReactionKey mapping.
+ *
+ * @param merged - For pull_request.closed events, whether the PR was merged (true) or just closed (false).
  */
-function githubEventToReactionKey(event: string, action?: string): string | null {
+function githubEventToReactionKey(event: string, action?: string, merged?: boolean): string | null {
   const key = action ? `${event}.${action}` : event;
   switch (key) {
     case "pull_request.opened":
     case "pull_request.reopened":
       return "pr-opened";
+    case "pull_request.closed":
+      // Only react to actual merges, not close-without-merge
+      return merged === true ? "pr-merged" : null;
     case "pull_request_review.changes_requested":
       return "changes-requested";
     case "pull_request_review.approved":
@@ -42,8 +47,9 @@ export async function POST(request: NextRequest) {
   const event = body.event as string;
   const action = body.action as string | undefined;
   const sessionId = body.sessionId as string;
+  const merged = typeof body.merged === "boolean" ? body.merged : undefined;
 
-  const reactionKey = githubEventToReactionKey(event, action);
+  const reactionKey = githubEventToReactionKey(event, action, merged);
   if (!reactionKey) {
     return NextResponse.json({ skipped: true, reason: "no reaction for event" });
   }

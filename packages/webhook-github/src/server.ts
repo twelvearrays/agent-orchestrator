@@ -42,6 +42,11 @@ app.post("/webhook/github", (req, res) => {
 
   const action = (payload as Record<string, string>)["action"];
 
+  // Extract merged flag for pull_request.closed events
+  const merged = eventType === "pull_request" && action === "closed"
+    ? Boolean((payload["pull_request"] as Record<string, unknown> | undefined)?.["merged"])
+    : undefined;
+
   // Async: correlate + fire reaction + send notification
   correlateSession(extracted.branch, extracted.repo, config.dataDir)
     .then((sessionId) => {
@@ -55,7 +60,7 @@ app.post("/webhook/github", (req, res) => {
       try { sendNtfy(config, eventType, action, sessionId, extracted.branch); } catch { /* silent */ }
       return Promise.all([
         signalLifecycle(sessionId),
-        fireReaction(eventType, action, sessionId),
+        fireReaction(eventType, action, sessionId, merged),
       ]).then(() => {});
     })
     .catch((err: unknown) => {
@@ -63,10 +68,10 @@ app.post("/webhook/github", (req, res) => {
     });
 });
 
-function fireReaction(eventType: string, action: string | undefined, sessionId: string): Promise<void> {
+function fireReaction(eventType: string, action: string | undefined, sessionId: string, merged?: boolean): Promise<void> {
   return new Promise((resolve) => {
     const url = new URL(`${config.webUrl}/api/internal/reaction`);
-    const body = JSON.stringify({ event: eventType, action, sessionId });
+    const body = JSON.stringify({ event: eventType, action, sessionId, ...(merged !== undefined && { merged }) });
     const req = http.request(
       {
         hostname: url.hostname,
