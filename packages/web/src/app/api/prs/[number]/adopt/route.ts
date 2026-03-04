@@ -55,6 +55,9 @@ export async function POST(
       adoptedPr: prNumber,
     });
 
+    // TODO: Log pr.adopted event once event logging is available from API routes
+    // (event system currently lives in lifecycle-manager)
+
     return NextResponse.json({ sessionId: session.id, prNumber }, { status: 201 });
   } catch (err) {
     return NextResponse.json(

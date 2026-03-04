@@ -886,6 +886,10 @@ export type EventType =
   | "pipeline.reviewing"
   // Issue lifecycle
   | "issue.failed"
+  | "issue.auto_spawned"
+  | "issue.retried"
+  // PR adoption
+  | "pr.adopted"
   // Reactions
   | "reaction.triggered"
   | "reaction.escalated"

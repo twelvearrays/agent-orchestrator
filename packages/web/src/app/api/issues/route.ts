@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getServices } from "@/lib/services";
+import { crossReferenceIssues } from "@/lib/issue-helpers";
 
 import type { Issue, IssueFilters, Tracker } from "@composio/ao-core";
 
@@ -43,26 +44,7 @@ export async function GET(request: Request) {
 
     // Cross-reference with active sessions
     const sessions = await sessionManager.list();
-    const issueSessionMap = new Map<string, { id: string; status: string; pr?: string }>();
-    for (const s of sessions) {
-      if (s.issueId) {
-        issueSessionMap.set(s.issueId, {
-          id: s.id,
-          status: s.status,
-          pr: s.pr?.url,
-        });
-      }
-    }
-
-    const dashboardIssues: DashboardIssue[] = issues.map((issue) => {
-      const session = issueSessionMap.get(issue.id);
-      return {
-        ...issue,
-        sessionId: session?.id,
-        sessionStatus: session?.status,
-        prUrl: session?.pr,
-      };
-    });
+    const dashboardIssues = crossReferenceIssues(issues, sessions);
 
     return NextResponse.json(dashboardIssues);
   } catch (err) {

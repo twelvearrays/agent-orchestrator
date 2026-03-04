@@ -70,6 +70,9 @@ export async function PUT(
       issueId,
     });
 
+    // TODO: Log issue.auto_spawned event once event logging is available from API routes
+    // (event system currently lives in lifecycle-manager)
+
     return NextResponse.json({ sessionId: session.id, issueId }, { status: 201 });
   } catch (err) {
     return NextResponse.json(

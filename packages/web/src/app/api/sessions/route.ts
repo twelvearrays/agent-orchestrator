@@ -1,6 +1,7 @@
 import { ACTIVITY_STATE, type SCM, type PRInfo, type Tracker } from "@composio/ao-core";
 import { NextResponse } from "next/server";
 import { getServices, getSCM } from "@/lib/services";
+import { crossReferenceIssues } from "@/lib/issue-helpers";
 import type { DashboardPR } from "@/lib/types";
 import type { DashboardIssue } from "@/app/api/issues/route";
 import {
@@ -138,25 +139,7 @@ export async function GET(request: Request) {
             tracker.listIssues({ state: "open", limit: 50 }, firstProject),
             issueTimeout,
           ]);
-          const issueSessionMap = new Map<string, { id: string; status: string; pr?: string }>();
-          for (const s of coreSessions) {
-            if (s.issueId) {
-              issueSessionMap.set(s.issueId, {
-                id: s.id,
-                status: s.status,
-                pr: s.pr?.url,
-              });
-            }
-          }
-          issues = rawIssues.map((issue) => {
-            const session = issueSessionMap.get(issue.id);
-            return {
-              ...issue,
-              sessionId: session?.id,
-              sessionStatus: session?.status,
-              prUrl: session?.pr,
-            };
-          });
+          issues = crossReferenceIssues(rawIssues, coreSessions);
         }
       }
     } catch {

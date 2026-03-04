@@ -4,6 +4,7 @@ import type { DashboardSession, DashboardPR } from "@/lib/types";
 import type { DashboardIssue } from "@/app/api/issues/route";
 import type { SCM, PRInfo, Tracker } from "@composio/ao-core";
 import { getServices, getSCM } from "@/lib/services";
+import { crossReferenceIssues } from "@/lib/issue-helpers";
 import {
   sessionToDashboard,
   resolveProject,
@@ -189,25 +190,7 @@ export default async function Home() {
             issueTimeout,
           ]);
           // Cross-reference with sessions
-          const issueSessionMap = new Map<string, { id: string; status: string; pr?: string }>();
-          for (const s of allSessions) {
-            if (s.issueId) {
-              issueSessionMap.set(s.issueId, {
-                id: s.id,
-                status: s.status,
-                pr: s.pr?.url,
-              });
-            }
-          }
-          issues = rawIssues.map((issue) => {
-            const session = issueSessionMap.get(issue.id);
-            return {
-              ...issue,
-              sessionId: session?.id,
-              sessionStatus: session?.status,
-              prUrl: session?.pr,
-            };
-          });
+          issues = crossReferenceIssues(rawIssues, allSessions);
         }
       }
     } catch {

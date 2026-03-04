@@ -39,6 +39,22 @@ export async function PUT(
       );
     }
 
+    // Guard: check retry limit — count terminated sessions for this issue
+    const sessions = await sessionManager.list();
+    const terminalStatuses = new Set(["stuck", "errored", "killed"]);
+    const terminatedCount = sessions.filter(
+      (s) => s.issueId === issueId && terminalStatuses.has(s.status),
+    ).length;
+
+    if (terminatedCount > issueQueue.maxRetries) {
+      return NextResponse.json(
+        {
+          error: `Retry limit exceeded: ${terminatedCount} failed attempts (max ${issueQueue.maxRetries})`,
+        },
+        { status: 409 },
+      );
+    }
+
     // Remove failed label, add agent-ready label via tracker
     const trackerName = projectConfig.tracker?.plugin ?? "linear";
     const tracker = registry.get<Tracker>("tracker", trackerName);
@@ -53,11 +69,27 @@ export async function PUT(
       );
     }
 
+    // Guard: check issue isn't already assigned to an active session
+    const existing = sessions.find(
+      (s) =>
+        s.issueId === issueId &&
+        !["merged", "killed", "terminated", "done"].includes(s.status),
+    );
+    if (existing) {
+      return NextResponse.json(
+        { error: `Issue already has active session: ${existing.id}` },
+        { status: 409 },
+      );
+    }
+
     // Spawn agent
     const session = await sessionManager.spawn({
       projectId: resolvedProjectId,
       issueId,
     });
+
+    // TODO: Log issue.retried event once event logging is available from API routes
+    // (event system currently lives in lifecycle-manager)
 
     return NextResponse.json({ sessionId: session.id, issueId }, { status: 201 });
   } catch (err) {

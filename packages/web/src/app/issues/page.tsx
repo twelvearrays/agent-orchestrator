@@ -3,6 +3,7 @@ import { IssuesPage } from "@/components/IssuesPage";
 import type { DashboardIssue } from "@/app/api/issues/route";
 import type { Tracker } from "@composio/ao-core";
 import { getServices } from "@/lib/services";
+import { crossReferenceIssues } from "@/lib/issue-helpers";
 import { getProjectName } from "@/lib/project-name";
 
 export const dynamic = "force-dynamic";
@@ -36,29 +37,7 @@ export default async function Issues() {
 
       // Cross-reference with active sessions
       const sessions = await sessionManager.list();
-      const issueSessionMap = new Map<
-        string,
-        { id: string; status: string; pr?: string }
-      >();
-      for (const s of sessions) {
-        if (s.issueId) {
-          issueSessionMap.set(s.issueId, {
-            id: s.id,
-            status: s.status,
-            pr: s.pr?.url,
-          });
-        }
-      }
-
-      issues = rawIssues.map((issue) => {
-        const session = issueSessionMap.get(issue.id);
-        return {
-          ...issue,
-          sessionId: session?.id,
-          sessionStatus: session?.status,
-          prUrl: session?.pr,
-        };
-      });
+      issues = crossReferenceIssues(rawIssues, sessions);
     }
   } catch {
     // Config not found or services unavailable — show empty page

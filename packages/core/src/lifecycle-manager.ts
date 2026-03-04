@@ -682,44 +682,71 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         updateMetadata(sessionsDir, session.id, { status: newStatus });
       }
 
-      // Failure guard: when a session with an issueId dies, swap agent-ready → agent-failed
-      // This prevents infinite respawn loops: the issue loses the agent label and gains failed.
+      // Failure guard: when a session with an issueId dies, either retry or mark failed.
+      // Checks how many terminated sessions exist for this issue against maxRetries.
       const terminalStates: SessionStatus[] = ["stuck", "errored", "killed"];
       if (terminalStates.includes(newStatus) && session.issueId && config.issueQueue) {
-        const { agentLabel, failedLabel } = config.issueQueue;
-        const project = config.projects[session.projectId];
+        const { agentLabel, failedLabel, maxRetries } = config.issueQueue;
         if (project) {
-          const trackerName = project.tracker?.plugin ?? "linear";
-          const issueTracker = registry.get<Tracker>("tracker", trackerName);
-          if (issueTracker?.updateIssue) {
+          // Count how many sessions for this issue have reached terminal state
+          const allSessions = await sessionManager.list();
+          const terminatedCount = allSessions.filter(
+            (s) =>
+              s.issueId === session.issueId &&
+              terminalStates.includes(s.status),
+          ).length;
+
+          if (terminatedCount <= maxRetries) {
+            // Under retry limit — re-spawn instead of marking failed
+            console.log(
+              `[LIFECYCLE] Session ${session.id} died (${newStatus}) for issue ${session.issueId} — retry ${terminatedCount}/${maxRetries}`,
+            );
             try {
-              await issueTracker.updateIssue(
-                session.issueId,
-                { labels: [failedLabel], removeLabels: [agentLabel] },
-                project,
-              );
+              await sessionManager.spawn({
+                projectId: session.projectId,
+                issueId: session.issueId,
+              });
             } catch {
-              // Label swap failed — log but don't block lifecycle
               console.error(
-                `[LIFECYCLE] Failed to swap labels on issue ${session.issueId} for session ${session.id}`,
+                `[LIFECYCLE] Failed to re-spawn for issue ${session.issueId}`,
               );
             }
-          }
+          } else {
+            // Exhausted retries — swap labels to mark as failed
+            const trackerName = project.tracker?.plugin ?? "linear";
+            const issueTracker = registry.get<Tracker>("tracker", trackerName);
+            if (issueTracker?.updateIssue) {
+              try {
+                await issueTracker.updateIssue(
+                  session.issueId,
+                  { labels: [failedLabel], removeLabels: [agentLabel] },
+                  project,
+                );
+              } catch {
+                // Label swap failed — log but don't block lifecycle
+                console.error(
+                  `[LIFECYCLE] Failed to swap labels on issue ${session.issueId} for session ${session.id}`,
+                );
+              }
+            }
 
-          // Fire issue.failed event and notify
-          const failEvent = createEvent("issue.failed", {
-            sessionId: session.id,
-            projectId: session.projectId,
-            message: `Session ${session.id} died (${newStatus}) — issue ${session.issueId} marked as failed`,
-            priority: "warning",
-            data: {
-              issueId: session.issueId,
-              terminalStatus: newStatus,
-              agentLabel,
-              failedLabel,
-            },
-          });
-          await notifyHuman(failEvent, "warning");
+            // Fire issue.failed event and notify
+            const failEvent = createEvent("issue.failed", {
+              sessionId: session.id,
+              projectId: session.projectId,
+              message: `Session ${session.id} died (${newStatus}) — issue ${session.issueId} marked as failed after ${terminatedCount} attempts (max ${maxRetries})`,
+              priority: "warning",
+              data: {
+                issueId: session.issueId,
+                terminalStatus: newStatus,
+                agentLabel,
+                failedLabel,
+                retryCount: terminatedCount,
+                maxRetries,
+              },
+            });
+            await notifyHuman(failEvent, "warning");
+          }
         }
       }
 
