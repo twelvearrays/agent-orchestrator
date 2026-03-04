@@ -1016,6 +1016,12 @@ export interface OrchestratorConfig {
 
   /** Issue triage queue configuration */
   issueQueue?: IssueQueueConfig;
+
+  /** Dashboard display configuration */
+  dashboard?: {
+    /** When set, only fetch PRs from these repos (e.g. ["org/repo"]) */
+    repos?: string[];
+  };
 }
 
 export interface DefaultPlugins {

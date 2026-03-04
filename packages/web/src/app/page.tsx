@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Dashboard } from "@/components/Dashboard";
 import type { DashboardSession, DashboardPR } from "@/lib/types";
 import type { DashboardIssue } from "@/app/api/issues/route";
-import type { SCM, PRInfo, Tracker } from "@composio/ao-core";
+import type { PRInfo, Tracker } from "@composio/ao-core";
 import { getServices, getSCM } from "@/lib/services";
 import { crossReferenceIssues } from "@/lib/issue-helpers";
 import {
@@ -16,6 +16,7 @@ import {
 } from "@/lib/serialize";
 import { prCache, prCacheKey } from "@/lib/cache";
 import { getProjectName } from "@/lib/project-name";
+import { getWatchedRepoSCMs } from "@/lib/repo-filter";
 
 export const dynamic = "force-dynamic";
 
@@ -105,15 +106,7 @@ export default async function Home() {
     await Promise.race([Promise.allSettled(enrichPromises), enrichTimeout]);
 
     // ── Fetch all open PRs from configured repos ──────────────────────
-    // Collect unique repos and their SCM plugins
-    const repoSCMs = new Map<string, SCM>();
-    for (const project of Object.values(config.projects)) {
-      if (!project.repo || repoSCMs.has(project.repo)) continue;
-      const scm = getSCM(registry, project);
-      if (scm?.listOpenPRs) {
-        repoSCMs.set(project.repo, scm);
-      }
-    }
+    const repoSCMs = getWatchedRepoSCMs(config, registry);
 
     // Fetch open PRs from each repo (cap at 3s total)
     if (repoSCMs.size > 0) {

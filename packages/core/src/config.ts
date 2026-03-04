@@ -142,6 +142,12 @@ const IssueQueueSchema = z.object({
   maxRetries: z.number().int().min(0).default(1),
 });
 
+const DashboardSchema = z
+  .object({
+    repos: z.array(z.string()).optional(),
+  })
+  .optional();
+
 const OrchestratorConfigSchema = z.object({
   port: z.number().default(3000),
   terminalPort: z.number().optional(),
@@ -160,6 +166,7 @@ const OrchestratorConfigSchema = z.object({
   reactions: z.record(ReactionConfigSchema).default({}),
   pipeline: PipelineConfigSchema.optional(),
   issueQueue: IssueQueueSchema.optional(),
+  dashboard: DashboardSchema,
 });
 
 // =============================================================================

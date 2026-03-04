@@ -1,4 +1,4 @@
-import { ACTIVITY_STATE, type SCM, type PRInfo, type Tracker } from "@composio/ao-core";
+import { ACTIVITY_STATE, type PRInfo, type Tracker } from "@composio/ao-core";
 import { NextResponse } from "next/server";
 import { getServices, getSCM } from "@/lib/services";
 import { crossReferenceIssues } from "@/lib/issue-helpers";
@@ -13,6 +13,7 @@ import {
   computeStats,
   prInfoToDashboard,
 } from "@/lib/serialize";
+import { getWatchedRepoSCMs } from "@/lib/repo-filter";
 
 /** GET /api/sessions — List all sessions with full state
  * Query params:
@@ -62,14 +63,7 @@ export async function GET(request: Request) {
 
     // ── Fetch all open PRs from configured repos ──────────────────────
     let extraPRs: DashboardPR[] = [];
-    const repoSCMs = new Map<string, SCM>();
-    for (const project of Object.values(config.projects)) {
-      if (!project.repo || repoSCMs.has(project.repo)) continue;
-      const scm = getSCM(registry, project);
-      if (scm?.listOpenPRs) {
-        repoSCMs.set(project.repo, scm);
-      }
-    }
+    const repoSCMs = getWatchedRepoSCMs(config, registry);
 
     if (repoSCMs.size > 0) {
       const repoFetchTimeout = new Promise<void>((resolve) => setTimeout(resolve, 3_000));

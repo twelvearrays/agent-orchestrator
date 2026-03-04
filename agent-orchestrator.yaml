@@ -128,3 +128,7 @@ reactions:
     auto: true
     action: update-tracker
     trackerState: "Done"
+
+dashboard:
+  repos:
+    - goodcodeworks/dashboard_
