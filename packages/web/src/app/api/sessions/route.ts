@@ -46,27 +46,30 @@ export async function GET(request: Request) {
       dashboardSessions = activeIndices.map((i) => dashboardSessions[i]);
     }
 
-    // Enrich metadata (issue labels, agent summaries, issue titles) — cap at 3s
-    const metaTimeout = new Promise<void>((resolve) => setTimeout(resolve, 3_000));
+    // Enrich metadata (issue labels, agent summaries, issue titles) — cap at 2s
+    const metaTimeout = new Promise<void>((resolve) => setTimeout(resolve, 2_000));
     await Promise.race([enrichSessionsMetadata(workerSessions, dashboardSessions, config, registry), metaTimeout]);
 
-    // Enrich sessions that have PRs with live SCM data (CI, reviews, mergeability)
-    const enrichPromises = workerSessions.map((core, i) => {
-      if (!core.pr) return Promise.resolve();
-      const project = resolveProject(core, config.projects);
-      const scm = getSCM(registry, project);
-      if (!scm) return Promise.resolve();
-      return enrichSessionPR(dashboardSessions[i], scm, core.pr);
-    });
-    const enrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 4_000));
-    await Promise.race([Promise.allSettled(enrichPromises), enrichTimeout]);
-
-    // ── Fetch all open PRs from configured repos ──────────────────────
-    let extraPRs: DashboardPR[] = [];
+    // ── Run session PR enrichment, repo PR fetch, and issue fetch in parallel ──
     const repoSCMs = getWatchedRepoSCMs(config, registry);
 
-    if (repoSCMs.size > 0) {
-      const repoFetchTimeout = new Promise<void>((resolve) => setTimeout(resolve, 3_000));
+    // Phase A: Enrich session PRs
+    const sessionEnrichTask = (async () => {
+      const enrichPromises = workerSessions.map((core, i) => {
+        if (!core.pr) return Promise.resolve();
+        const project = resolveProject(core, config.projects);
+        const scm = getSCM(registry, project);
+        if (!scm) return Promise.resolve();
+        return enrichSessionPR(dashboardSessions[i], scm, core.pr);
+      });
+      const timeout = new Promise<void>((resolve) => setTimeout(resolve, 2_000));
+      await Promise.race([Promise.allSettled(enrichPromises), timeout]);
+    })();
+
+    // Phase B: Fetch and enrich open PRs from configured repos
+    const repoFetchTask = (async (): Promise<DashboardPR[]> => {
+      if (repoSCMs.size === 0) return [];
+
       const repoFetches = Array.from(repoSCMs.entries()).map(async ([repo, scm]) => {
         try {
           if (!scm.listOpenPRs) return [];
@@ -76,16 +79,16 @@ export async function GET(request: Request) {
         }
       });
 
+      const fetchTimeout = new Promise<void>((resolve) => setTimeout(resolve, 2_000));
       const repoResults = await Promise.race([
         Promise.allSettled(repoFetches),
-        repoFetchTimeout.then(() => [] as PromiseSettledResult<never>[]),
+        fetchTimeout.then(() => [] as PromiseSettledResult<never>[]),
       ]);
 
       const allRepoPRs = (repoResults as PromiseSettledResult<PRInfo[]>[])
         .filter((r): r is PromiseFulfilledResult<PRInfo[]> => r.status === "fulfilled")
         .flatMap((r) => r.value);
 
-      // Build set of session-linked PR keys for deduplication
       const sessionPRKeys = new Set(
         dashboardSessions
           .filter((s): s is typeof s & { pr: DashboardPR } => s.pr !== null)
@@ -96,7 +99,6 @@ export async function GET(request: Request) {
         .filter((pr) => !sessionPRKeys.has(`${pr.owner}/${pr.repo}#${pr.number}`))
         .map(prInfoToDashboard);
 
-      // Enrich extra PRs
       if (newPRs.length > 0) {
         const extraEnrichPromises = newPRs.map((dashPR) => {
           const repo = `${dashPR.owner}/${dashPR.repo}`;
@@ -114,35 +116,41 @@ export async function GET(request: Request) {
           };
           return enrichDashboardPR(dashPR, scm, prInfo);
         });
-        const extraEnrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 4_000));
-        await Promise.race([Promise.allSettled(extraEnrichPromises), extraEnrichTimeout]);
+        const enrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 2_000));
+        await Promise.race([Promise.allSettled(extraEnrichPromises), enrichTimeout]);
       }
 
-      extraPRs = newPRs;
-    }
+      return newPRs;
+    })();
 
-    // ── Fetch issues from tracker ────────────────────────────────────
-    let issues: DashboardIssue[] = [];
-    try {
-      const firstProjectId = Object.keys(config.projects)[0];
-      const firstProject = firstProjectId ? config.projects[firstProjectId] : undefined;
-      if (firstProject) {
+    // Phase C: Fetch issues from tracker
+    const issueFetchTask = (async (): Promise<DashboardIssue[]> => {
+      try {
+        const firstProjectId = Object.keys(config.projects)[0];
+        const firstProject = firstProjectId ? config.projects[firstProjectId] : undefined;
+        if (!firstProject) return [];
         const trackerName = firstProject.tracker?.plugin ?? "linear";
         const tracker = registry.get<Tracker>("tracker", trackerName);
-        if (tracker?.listIssues) {
-          const issueTimeout = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("timeout")), 3_000),
-          );
-          const rawIssues = await Promise.race([
-            tracker.listIssues({ state: "open", limit: 50 }, firstProject),
-            issueTimeout,
-          ]);
-          issues = crossReferenceIssues(rawIssues, coreSessions);
-        }
+        if (!tracker?.listIssues) return [];
+        const issueTimeout = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("timeout")), 2_000),
+        );
+        const rawIssues = await Promise.race([
+          tracker.listIssues({ state: "open", limit: 50 }, firstProject),
+          issueTimeout,
+        ]);
+        return crossReferenceIssues(rawIssues, coreSessions);
+      } catch {
+        return [];
       }
-    } catch {
-      // Tracker unavailable — proceed without issues
-    }
+    })();
+
+    // Wait for all three phases concurrently
+    const [, extraPRs, issues] = await Promise.all([
+      sessionEnrichTask,
+      repoFetchTask,
+      issueFetchTask,
+    ]);
 
     return NextResponse.json({
       sessions: dashboardSessions,
