@@ -1,10 +1,8 @@
 /**
  * Launch the internal HTTP server for inter-process lifecycle signalling.
  *
- * The lifecycle manager does NOT live in the CLI process — the CLI starts
- * the dashboard and orchestrator agent. The internal server here acts as
- * a signal relay: it receives hook push signals and forwards them to the
- * session manager to trigger an immediate metadata refresh.
+ * Accepts a real LifecycleManager (with pipeline support) when available,
+ * or falls back to a minimal adapter that just refreshes session metadata.
  */
 
 import http from "node:http";
@@ -13,8 +11,8 @@ import type { LifecycleManager, SessionManager } from "@composio/ao-core";
 
 /**
  * Build a minimal LifecycleManager adapter that delegates check() to
- * sessionManager.get(), which forces a metadata refresh. The full
- * lifecycle manager runs inside the orchestrator agent's process, not here.
+ * sessionManager.get(), which forces a metadata refresh. Used as fallback
+ * when no real lifecycle manager is provided.
  */
 function buildLifecycleAdapter(sm: SessionManager): LifecycleManager {
   return {
@@ -22,8 +20,6 @@ function buildLifecycleAdapter(sm: SessionManager): LifecycleManager {
     stop: () => {},
     getStates: () => new Map(),
     check: async (sessionId: string) => {
-      // sm.get() re-reads metadata from disk and enriches with live state,
-      // which is what triggers the next SSE poll cycle to pick up new state.
       await sm.get(sessionId);
     },
   };
@@ -32,9 +28,10 @@ function buildLifecycleAdapter(sm: SessionManager): LifecycleManager {
 export async function startInternalServer(
   sm: SessionManager,
   port = 3101,
+  lifecycle?: LifecycleManager,
 ): Promise<http.Server> {
-  const lifecycle = buildLifecycleAdapter(sm);
-  const server = createInternalServer(lifecycle, port);
+  const lm = lifecycle ?? buildLifecycleAdapter(sm);
+  const server = createInternalServer(lm, port);
 
   // Bind to loopback only — never 0.0.0.0
   server.listen(port, "127.0.0.1");

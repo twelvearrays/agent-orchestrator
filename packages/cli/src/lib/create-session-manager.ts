@@ -37,6 +37,12 @@ async function getRegistry(config: OrchestratorConfig): Promise<PluginRegistry> 
 }
 
 /**
+ * Get the plugin registry for a given config.
+ * Exposed so that start.ts can pass it to lifecycle/pipeline managers.
+ */
+export { getRegistry };
+
+/**
  * Create a SessionManager backed by core's implementation.
  * Initializes the plugin registry from config and wires everything up.
  */

@@ -24,12 +24,14 @@ import {
   isRepoAlreadyCloned,
   generateConfigFromUrl,
   configToYaml,
+  createLifecycleManager,
+  createPipelineManager,
   type OrchestratorConfig,
   type ProjectConfig,
   type ParsedRepoUrl,
 } from "@composio/ao-core";
 import { exec, execSilent } from "../lib/shell.js";
-import { getSessionManager } from "../lib/create-session-manager.js";
+import { getSessionManager, getRegistry } from "../lib/create-session-manager.js";
 import { startInternalServer } from "../lib/internal-server-launcher.js";
 import { findWebDir, buildDashboardEnv, waitForPortAndOpen, isPortAvailable, findFreePort, MAX_PORT_SCAN } from "../lib/web-dir.js";
 import { cleanNextCache } from "../lib/dashboard-rebuild.js";
@@ -254,12 +256,26 @@ async function runStartup(
 
   console.log(chalk.bold(`\nStarting orchestrator for ${chalk.cyan(project.name)}\n`));
 
-  // Start internal signal server (for Claude Code hook push + webhook relay)
+  // Build session manager and plugin registry
   const sm = await getSessionManager(config);
+  const registry = await getRegistry(config);
+
+  // Create pipeline + lifecycle managers so the pre-PR pipeline runs automatically.
+  // When an agent finishes coding (idle with commits, no PR), the lifecycle manager
+  // detects this and triggers: automated checks → test agent → review agent → approve.
+  const pipelineManager = createPipelineManager({ sessionManager: sm, config, registry });
+  const lifecycleManager = createLifecycleManager({
+    config,
+    registry,
+    sessionManager: sm,
+    pipelineManager,
+  });
+
+  // Start internal signal server (for Claude Code hook push + webhook relay)
   const internalPort = config.port ? config.port + 101 : 3101;
   let internalServer: Awaited<ReturnType<typeof startInternalServer>> | null = null;
   try {
-    internalServer = await startInternalServer(sm, internalPort);
+    internalServer = await startInternalServer(sm, internalPort, lifecycleManager);
     console.log(
       chalk.dim(`  Internal signal server on http://127.0.0.1:${internalPort}`),
     );
@@ -268,6 +284,10 @@ async function runStartup(
       chalk.yellow("  Could not start internal signal server (port may be in use)"),
     );
   }
+
+  // Start lifecycle polling loop (30s interval)
+  lifecycleManager.start(30_000);
+  console.log(chalk.dim("  Lifecycle manager polling (30s interval)"));
 
   const spinner = ora();
   let dashboardProcess: ChildProcess | null = null;
@@ -375,11 +395,14 @@ async function runStartup(
     void waitForPortAndOpen(port, orchestratorUrl, openAbort.signal);
   }
 
-  // Clean up internal server on exit
+  // Clean up internal server and lifecycle manager on exit
   if (internalServer) {
     const srv = internalServer;
-    process.once("SIGTERM", () => srv.close());
-    process.once("SIGINT", () => srv.close());
+    process.once("SIGTERM", () => { lifecycleManager.stop(); srv.close(); });
+    process.once("SIGINT", () => { lifecycleManager.stop(); srv.close(); });
+  } else {
+    process.once("SIGTERM", () => lifecycleManager.stop());
+    process.once("SIGINT", () => lifecycleManager.stop());
   }
 
   // Keep dashboard process alive if it was started
