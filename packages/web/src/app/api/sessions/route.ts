@@ -1,7 +1,8 @@
-import { ACTIVITY_STATE, type SCM, type PRInfo } from "@composio/ao-core";
+import { ACTIVITY_STATE, type SCM, type PRInfo, type Tracker } from "@composio/ao-core";
 import { NextResponse } from "next/server";
 import { getServices, getSCM } from "@/lib/services";
 import type { DashboardPR } from "@/lib/types";
+import type { DashboardIssue } from "@/app/api/issues/route";
 import {
   sessionToDashboard,
   resolveProject,
@@ -121,10 +122,52 @@ export async function GET(request: Request) {
       extraPRs = newPRs;
     }
 
+    // ── Fetch issues from tracker ────────────────────────────────────
+    let issues: DashboardIssue[] = [];
+    try {
+      const firstProjectId = Object.keys(config.projects)[0];
+      const firstProject = firstProjectId ? config.projects[firstProjectId] : undefined;
+      if (firstProject) {
+        const trackerName = firstProject.tracker?.plugin ?? "linear";
+        const tracker = registry.get<Tracker>("tracker", trackerName);
+        if (tracker?.listIssues) {
+          const issueTimeout = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("timeout")), 3_000),
+          );
+          const rawIssues = await Promise.race([
+            tracker.listIssues({ state: "open", limit: 50 }, firstProject),
+            issueTimeout,
+          ]);
+          const issueSessionMap = new Map<string, { id: string; status: string; pr?: string }>();
+          for (const s of coreSessions) {
+            if (s.issueId) {
+              issueSessionMap.set(s.issueId, {
+                id: s.id,
+                status: s.status,
+                pr: s.pr?.url,
+              });
+            }
+          }
+          issues = rawIssues.map((issue) => {
+            const session = issueSessionMap.get(issue.id);
+            return {
+              ...issue,
+              sessionId: session?.id,
+              sessionStatus: session?.status,
+              prUrl: session?.pr,
+            };
+          });
+        }
+      }
+    } catch {
+      // Tracker unavailable — proceed without issues
+    }
+
     return NextResponse.json({
       sessions: dashboardSessions,
       stats: computeStats(dashboardSessions),
       extraPRs,
+      issues,
     });
   } catch (err) {
     return NextResponse.json(
