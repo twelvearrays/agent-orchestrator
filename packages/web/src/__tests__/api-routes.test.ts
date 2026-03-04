@@ -229,7 +229,7 @@ import { GET as eventsGET } from "@/app/api/events/route";
 import { GET as issuesGET } from "@/app/api/issues/route";
 import { PUT as assignPUT } from "@/app/api/issues/[id]/assign/route";
 import { PUT as retryPUT } from "@/app/api/issues/[id]/retry/route";
-import { POST as adoptPOST } from "@/app/api/prs/[number]/adopt/route";
+import { POST as adoptPOST } from "@/app/api/prs/[id]/adopt/route";
 
 function makeRequest(url: string, init?: RequestInit): NextRequest {
   return new NextRequest(
@@ -768,7 +768,7 @@ describe("API Routes", () => {
         }),
         headers: { "Content-Type": "application/json" },
       });
-      const res = await adoptPOST(req, { params: Promise.resolve({ number: "42" }) });
+      const res = await adoptPOST(req, { params: Promise.resolve({ id: "42" }) });
       expect(res.status).toBe(201);
       const data = await res.json();
       expect(data.sessionId).toBeDefined();
@@ -788,7 +788,7 @@ describe("API Routes", () => {
         body: JSON.stringify({ projectId: "my-app", prUrl: "https://github.com/acme/my-app/pull/42" }),
         headers: { "Content-Type": "application/json" },
       });
-      const res = await adoptPOST(req, { params: Promise.resolve({ number: "42" }) });
+      const res = await adoptPOST(req, { params: Promise.resolve({ id: "42" }) });
       expect(res.status).toBe(400);
       const data = await res.json();
       expect(data.error).toMatch(/prUrl and branch/);
@@ -804,7 +804,7 @@ describe("API Routes", () => {
         }),
         headers: { "Content-Type": "application/json" },
       });
-      const res = await adoptPOST(req, { params: Promise.resolve({ number: "abc" }) });
+      const res = await adoptPOST(req, { params: Promise.resolve({ id: "abc" }) });
       expect(res.status).toBe(400);
       const data = await res.json();
       expect(data.error).toMatch(/Invalid PR number/);

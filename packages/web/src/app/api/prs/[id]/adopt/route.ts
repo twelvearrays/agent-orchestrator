@@ -2,12 +2,12 @@ import { type NextRequest, NextResponse } from "next/server";
 import { getSessionsDir, updateMetadata } from "@composio/ao-core";
 import { getServices } from "@/lib/services";
 
-/** POST /api/prs/:number/adopt — Create a pipeline-only session for a human PR */
+/** POST /api/prs/:id/adopt — Create a pipeline-only session for a human PR */
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ number: string }> },
+  { params }: { params: Promise<{ id: string }> },
 ) {
-  const { number: prNumber } = await params;
+  const prNumber = (await params).id;
   if (!/^\d+$/.test(prNumber)) {
     return NextResponse.json({ error: "Invalid PR number" }, { status: 400 });
   }
