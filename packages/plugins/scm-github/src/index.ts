@@ -233,6 +233,13 @@ function createGitHubSCM(): SCM {
           };
         });
       } catch (err) {
+        // gh pr checks exits non-zero with "no checks reported" when
+        // the branch has zero CI checks configured — that's a valid
+        // empty result, not an error.
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("no checks reported")) {
+          return [];
+        }
         // Propagate so callers (getCISummary) can decide how to handle.
         // Do NOT silently return [] — that causes a fail-open where CI
         // appears healthy when we simply failed to fetch check status.
