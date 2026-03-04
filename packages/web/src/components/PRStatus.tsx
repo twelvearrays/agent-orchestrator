@@ -97,7 +97,7 @@ export function PRTableRow({ pr }: PRTableRowProps) {
     <tr className="border-b border-[var(--color-border-muted)] hover:bg-[rgba(88,166,255,0.03)]">
       <td className="px-3 py-2.5 text-sm">
         <a href={pr.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
-          #{pr.number}
+          <span className="text-[var(--color-text-muted)]">{pr.repo}</span>#{pr.number}
         </a>
       </td>
       <td className="max-w-[420px] truncate px-3 py-2.5 text-sm font-medium">{pr.title}</td>

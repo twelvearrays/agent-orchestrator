@@ -83,9 +83,10 @@ export function Dashboard({ initialSessions, stats: _stats, orchestratorId, proj
       .filter((s): s is DashboardSession & { pr: DashboardPR } => s.pr?.state === "open")
       .map((s) => s.pr);
     const all = [...sessionPRs, ...(extraPRs ?? [])];
-    // Deduplicate by number+repo
+    // Deduplicate by number+repo, keep only open PRs
     const seen = new Set<string>();
     const unique = all.filter((pr) => {
+      if (pr.state !== "open") return false;
       const key = `${pr.owner}/${pr.repo}#${pr.number}`;
       if (seen.has(key)) return false;
       seen.add(key);
@@ -463,7 +464,7 @@ export function Dashboard({ initialSessions, stats: _stats, orchestratorId, proj
                 </thead>
                 <tbody>
                   {openPRs.map((pr) => (
-                    <PRTableRow key={pr.number} pr={pr} />
+                    <PRTableRow key={`${pr.owner}/${pr.repo}#${pr.number}`} pr={pr} />
                   ))}
                 </tbody>
               </table>
