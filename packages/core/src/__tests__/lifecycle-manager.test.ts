@@ -15,6 +15,7 @@ import type {
   Agent,
   SCM,
   Notifier,
+  Tracker,
   ActivityState,
   PRInfo,
 } from "../types.js";
@@ -859,5 +860,312 @@ describe("getStates", () => {
     // Modifying returned map shouldn't affect internal state
     states.set("app-1", "killed");
     expect(lm.getStates().get("app-1")).toBe("working");
+  });
+});
+
+describe("failure guard", () => {
+  let mockTracker: Tracker;
+  let mockNotifier: Notifier;
+  let configWithIssueQueue: OrchestratorConfig;
+  let registryWithTracker: PluginRegistry;
+
+  beforeEach(() => {
+    mockTracker = {
+      name: "mock-tracker",
+      getIssue: vi.fn(),
+      isCompleted: vi.fn(),
+      issueUrl: vi.fn(),
+      branchName: vi.fn(),
+      generatePrompt: vi.fn(),
+      updateIssue: vi.fn().mockResolvedValue(undefined),
+    };
+
+    mockNotifier = {
+      name: "mock-notifier",
+      notify: vi.fn().mockResolvedValue(undefined),
+    };
+
+    registryWithTracker = {
+      ...mockRegistry,
+      get: vi.fn().mockImplementation((slot: string, name?: string) => {
+        if (slot === "runtime") return mockRuntime;
+        if (slot === "agent") return mockAgent;
+        if (slot === "tracker") return mockTracker;
+        if (slot === "notifier" && name === "desktop") return mockNotifier;
+        return null;
+      }),
+    };
+
+    configWithIssueQueue = {
+      ...config,
+      issueQueue: {
+        readyState: "Todo",
+        agentLabel: "agent-ready",
+        failedLabel: "agent-failed",
+        maxRetries: 1,
+      },
+    };
+
+    // Make runtime dead so session transitions to "killed"
+    vi.mocked(mockRuntime.isAlive).mockResolvedValue(false);
+  });
+
+  it("swaps labels on session death when retries exhausted", async () => {
+    const session = makeSession({
+      status: "working",
+      issueId: "ISSUE-1",
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+    // terminatedCount = 2 (this session + one other), maxRetries = 1 → exhausted
+    vi.mocked(mockSessionManager.list).mockResolvedValue([
+      makeSession({ id: "app-0", status: "killed", issueId: "ISSUE-1" }),
+      makeSession({ id: "app-1", status: "killed", issueId: "ISSUE-1" }),
+    ]);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config: configWithIssueQueue,
+      registry: registryWithTracker,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("killed");
+    expect(mockTracker.updateIssue).toHaveBeenCalledWith(
+      "ISSUE-1",
+      { labels: ["agent-failed"], removeLabels: ["agent-ready"] },
+      expect.anything(),
+    );
+  });
+
+  it("fires issue.failed event when retries exhausted", async () => {
+    const session = makeSession({
+      status: "working",
+      issueId: "ISSUE-1",
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+    vi.mocked(mockSessionManager.list).mockResolvedValue([
+      makeSession({ id: "app-0", status: "killed", issueId: "ISSUE-1" }),
+      makeSession({ id: "app-1", status: "killed", issueId: "ISSUE-1" }),
+    ]);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+    });
+
+    // Route "warning" notifications to desktop so notifyHuman resolves the mock
+    const configWithWarningRoute = {
+      ...configWithIssueQueue,
+      notificationRouting: {
+        ...configWithIssueQueue.notificationRouting,
+        warning: ["desktop"],
+      },
+    };
+
+    const lm = createLifecycleManager({
+      config: configWithWarningRoute,
+      registry: registryWithTracker,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(mockNotifier.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "issue.failed" }),
+    );
+  });
+
+  it("sends notification on failure", async () => {
+    const session = makeSession({
+      status: "working",
+      issueId: "ISSUE-1",
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+    vi.mocked(mockSessionManager.list).mockResolvedValue([
+      makeSession({ id: "app-0", status: "killed", issueId: "ISSUE-1" }),
+      makeSession({ id: "app-1", status: "killed", issueId: "ISSUE-1" }),
+    ]);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+    });
+
+    // Route "warning" notifications to desktop so notifyHuman resolves the mock
+    const configWithWarningRoute = {
+      ...configWithIssueQueue,
+      notificationRouting: {
+        ...configWithIssueQueue.notificationRouting,
+        warning: ["desktop"],
+      },
+    };
+
+    const lm = createLifecycleManager({
+      config: configWithWarningRoute,
+      registry: registryWithTracker,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(mockNotifier.notify).toHaveBeenCalled();
+    const notifyCall = vi.mocked(mockNotifier.notify).mock.calls[0][0];
+    expect(notifyCall.type).toBe("issue.failed");
+    expect(notifyCall.data).toEqual(
+      expect.objectContaining({
+        issueId: "ISSUE-1",
+        terminalStatus: "killed",
+        agentLabel: "agent-ready",
+        failedLabel: "agent-failed",
+      }),
+    );
+  });
+
+  it("skips guard when no issueQueue config", async () => {
+    const session = makeSession({
+      status: "working",
+      issueId: "ISSUE-1",
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+    });
+
+    // Use base config without issueQueue
+    const lm = createLifecycleManager({
+      config,
+      registry: registryWithTracker,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("killed");
+    expect(mockTracker.updateIssue).not.toHaveBeenCalled();
+    expect(mockNotifier.notify).not.toHaveBeenCalled();
+  });
+
+  it("skips guard when session has no issueId", async () => {
+    const session = makeSession({
+      status: "working",
+      issueId: null,
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config: configWithIssueQueue,
+      registry: registryWithTracker,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(lm.getStates().get("app-1")).toBe("killed");
+    expect(mockTracker.updateIssue).not.toHaveBeenCalled();
+    expect(mockNotifier.notify).not.toHaveBeenCalled();
+  });
+
+  it("auto-retries when under maxRetries", async () => {
+    const configHighRetries = {
+      ...configWithIssueQueue,
+      issueQueue: {
+        ...configWithIssueQueue.issueQueue!,
+        maxRetries: 3,
+      },
+    };
+
+    const session = makeSession({
+      status: "working",
+      issueId: "ISSUE-1",
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+    // terminatedCount = 1 (just this session), maxRetries = 3 → under limit
+    vi.mocked(mockSessionManager.list).mockResolvedValue([
+      makeSession({ id: "app-1", status: "killed", issueId: "ISSUE-1" }),
+    ]);
+    vi.mocked(mockSessionManager.spawn).mockResolvedValue(
+      makeSession({ id: "app-2", issueId: "ISSUE-1" }),
+    );
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config: configHighRetries,
+      registry: registryWithTracker,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(mockSessionManager.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "my-app",
+        issueId: "ISSUE-1",
+      }),
+    );
+    expect(mockTracker.updateIssue).not.toHaveBeenCalled();
+  });
+
+  it("swaps labels when maxRetries exhausted", async () => {
+    const session = makeSession({
+      status: "working",
+      issueId: "ISSUE-1",
+    });
+    vi.mocked(mockSessionManager.get).mockResolvedValue(session);
+    // terminatedCount = 2, maxRetries = 1 → exhausted (2 > 1)
+    vi.mocked(mockSessionManager.list).mockResolvedValue([
+      makeSession({ id: "app-0", status: "stuck", issueId: "ISSUE-1" }),
+      makeSession({ id: "app-1", status: "killed", issueId: "ISSUE-1" }),
+    ]);
+
+    writeMetadata(sessionsDir, "app-1", {
+      worktree: "/tmp",
+      branch: "main",
+      status: "working",
+      project: "my-app",
+    });
+
+    const lm = createLifecycleManager({
+      config: configWithIssueQueue,
+      registry: registryWithTracker,
+      sessionManager: mockSessionManager,
+    });
+
+    await lm.check("app-1");
+
+    expect(mockTracker.updateIssue).toHaveBeenCalledWith(
+      "ISSUE-1",
+      { labels: ["agent-failed"], removeLabels: ["agent-ready"] },
+      expect.anything(),
+    );
+    expect(mockSessionManager.spawn).not.toHaveBeenCalled();
   });
 });

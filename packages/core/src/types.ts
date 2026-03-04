@@ -187,7 +187,7 @@ export interface SessionSpawnConfig {
   /** Use an existing workspace instead of creating one */
   workspacePath?: string;
   /** Role for this session */
-  role?: "coder" | "tester" | "reviewer";
+  role?: "coder" | "tester" | "reviewer" | "pipeline";
   /** Parent session ID for pipeline agents */
   parentSession?: string;
   /** Skip pipeline stages */
@@ -530,6 +530,8 @@ export interface IssueFilters {
 export interface IssueUpdate {
   state?: "open" | "in_progress" | "closed";
   labels?: string[];
+  /** Labels to remove from the issue */
+  removeLabels?: string[];
   assignee?: string;
   comment?: string;
   /** Workflow state name for tracker-native state transitions (e.g. "In Review") */
@@ -548,6 +550,18 @@ export interface CreateIssueInput {
   labels?: string[];
   assignee?: string;
   priority?: number;
+}
+
+/** Configuration for the issue triage queue */
+export interface IssueQueueConfig {
+  /** Linear/tracker state name that means "ready for triage" */
+  readyState: string;
+  /** Label that triggers auto-spawn */
+  agentLabel: string;
+  /** Label applied on terminal failure */
+  failedLabel: string;
+  /** Max re-spawns before giving up (default 1 = no retry) */
+  maxRetries: number;
 }
 
 // =============================================================================
@@ -870,6 +884,12 @@ export type EventType =
   | "pipeline.checking"
   | "pipeline.testing"
   | "pipeline.reviewing"
+  // Issue lifecycle
+  | "issue.failed"
+  | "issue.auto_spawned"
+  | "issue.retried"
+  // PR adoption
+  | "pr.adopted"
   // Reactions
   | "reaction.triggered"
   | "reaction.escalated"
@@ -993,6 +1013,9 @@ export interface OrchestratorConfig {
 
   /** Pre-PR pipeline configuration */
   pipeline?: PipelineConfig;
+
+  /** Issue triage queue configuration */
+  issueQueue?: IssueQueueConfig;
 }
 
 export interface DefaultPlugins {

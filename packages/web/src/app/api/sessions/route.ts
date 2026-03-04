@@ -1,7 +1,9 @@
-import { ACTIVITY_STATE, type SCM, type PRInfo } from "@composio/ao-core";
+import { ACTIVITY_STATE, type SCM, type PRInfo, type Tracker } from "@composio/ao-core";
 import { NextResponse } from "next/server";
 import { getServices, getSCM } from "@/lib/services";
+import { crossReferenceIssues } from "@/lib/issue-helpers";
 import type { DashboardPR } from "@/lib/types";
+import type { DashboardIssue } from "@/app/api/issues/route";
 import {
   sessionToDashboard,
   resolveProject,
@@ -23,6 +25,10 @@ export async function GET(request: Request) {
 
     const { config, registry, sessionManager } = await getServices();
     const coreSessions = await sessionManager.list();
+
+    // Find orchestrator session ID (if running) and expose to clients
+    const orchSession = coreSessions.find((s) => s.id.endsWith("-orchestrator"));
+    const orchestratorId = orchSession ? orchSession.id : null;
 
     // Filter out orchestrator sessions — they get their own button, not a card
     let workerSessions = coreSessions.filter((s) => !s.id.endsWith("-orchestrator"));
@@ -121,10 +127,35 @@ export async function GET(request: Request) {
       extraPRs = newPRs;
     }
 
+    // ── Fetch issues from tracker ────────────────────────────────────
+    let issues: DashboardIssue[] = [];
+    try {
+      const firstProjectId = Object.keys(config.projects)[0];
+      const firstProject = firstProjectId ? config.projects[firstProjectId] : undefined;
+      if (firstProject) {
+        const trackerName = firstProject.tracker?.plugin ?? "linear";
+        const tracker = registry.get<Tracker>("tracker", trackerName);
+        if (tracker?.listIssues) {
+          const issueTimeout = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("timeout")), 3_000),
+          );
+          const rawIssues = await Promise.race([
+            tracker.listIssues({ state: "open", limit: 50 }, firstProject),
+            issueTimeout,
+          ]);
+          issues = crossReferenceIssues(rawIssues, coreSessions);
+        }
+      }
+    } catch {
+      // Tracker unavailable — proceed without issues
+    }
+
     return NextResponse.json({
       sessions: dashboardSessions,
       stats: computeStats(dashboardSessions),
       extraPRs,
+      issues,
+      orchestratorId,
     });
   } catch (err) {
     return NextResponse.json(

@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { Dashboard } from "@/components/Dashboard";
 import type { DashboardSession, DashboardPR } from "@/lib/types";
-import type { SCM, PRInfo } from "@composio/ao-core";
+import type { DashboardIssue } from "@/app/api/issues/route";
+import type { SCM, PRInfo, Tracker } from "@composio/ao-core";
 import { getServices, getSCM } from "@/lib/services";
+import { crossReferenceIssues } from "@/lib/issue-helpers";
 import {
   sessionToDashboard,
   resolveProject,
@@ -26,6 +28,7 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function Home() {
   let sessions: DashboardSession[] = [];
   let extraPRs: DashboardPR[] = [];
+  let issues: DashboardIssue[] = [];
   let orchestratorId: string | null = null;
   const projectName = getProjectName();
   try {
@@ -170,11 +173,34 @@ export default async function Home() {
 
       extraPRs = newPRs;
     }
+
+    // ── Fetch issues from tracker ────────────────────────────────────
+    try {
+      const firstProjectId = Object.keys(config.projects)[0];
+      const firstProject = firstProjectId ? config.projects[firstProjectId] : undefined;
+      if (firstProject) {
+        const trackerName = firstProject.tracker?.plugin ?? "linear";
+        const tracker = registry.get<Tracker>("tracker", trackerName);
+        if (tracker?.listIssues) {
+          const issueTimeout = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("timeout")), 3_000),
+          );
+          const rawIssues = await Promise.race([
+            tracker.listIssues({ state: "open", limit: 50 }, firstProject),
+            issueTimeout,
+          ]);
+          // Cross-reference with sessions
+          issues = crossReferenceIssues(rawIssues, allSessions);
+        }
+      }
+    } catch {
+      // Tracker unavailable — proceed without issues
+    }
   } catch {
     // Config not found or services unavailable — show empty dashboard
   }
 
   return (
-    <Dashboard initialSessions={sessions} stats={computeStats(sessions)} orchestratorId={orchestratorId} projectName={projectName} extraPRs={extraPRs} />
+    <Dashboard initialSessions={sessions} stats={computeStats(sessions)} orchestratorId={orchestratorId} projectName={projectName} extraPRs={extraPRs} issues={issues} />
   );
 }

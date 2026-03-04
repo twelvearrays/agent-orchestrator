@@ -344,6 +344,51 @@ describe("tracker-github plugin", () => {
       // Should have called gh 3 times: close + edit labels + comment
       expect(ghMock).toHaveBeenCalledTimes(3);
     });
+
+    it("removes labels with --remove-label", async () => {
+      ghMock.mockResolvedValue({ stdout: "" });
+      await tracker.updateIssue!("123", { removeLabels: ["bug", "wontfix"] }, project);
+      // Each label is removed in a separate gh call
+      expect(ghMock).toHaveBeenCalledTimes(2);
+      expect(ghMock).toHaveBeenCalledWith(
+        "gh",
+        ["issue", "edit", "123", "--repo", "acme/repo", "--remove-label", "bug"],
+        expect.any(Object),
+      );
+      expect(ghMock).toHaveBeenCalledWith(
+        "gh",
+        ["issue", "edit", "123", "--repo", "acme/repo", "--remove-label", "wontfix"],
+        expect.any(Object),
+      );
+    });
+
+    it("handles both add and remove labels in same call", async () => {
+      ghMock.mockResolvedValue({ stdout: "" });
+      await tracker.updateIssue!(
+        "123",
+        { labels: ["in-progress"], removeLabels: ["todo"] },
+        project,
+      );
+      // 1 call for --add-label, 1 call for --remove-label
+      expect(ghMock).toHaveBeenCalledTimes(2);
+      expect(ghMock).toHaveBeenCalledWith(
+        "gh",
+        ["issue", "edit", "123", "--repo", "acme/repo", "--add-label", "in-progress"],
+        expect.any(Object),
+      );
+      expect(ghMock).toHaveBeenCalledWith(
+        "gh",
+        ["issue", "edit", "123", "--repo", "acme/repo", "--remove-label", "todo"],
+        expect.any(Object),
+      );
+    });
+
+    it("skips removeLabels when array is empty", async () => {
+      ghMock.mockResolvedValue({ stdout: "" });
+      await tracker.updateIssue!("123", { removeLabels: [] }, project);
+      // No gh calls should be made for empty removeLabels
+      expect(ghMock).not.toHaveBeenCalled();
+    });
   });
 
   // ---- createIssue -------------------------------------------------------

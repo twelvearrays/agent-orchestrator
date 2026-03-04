@@ -224,6 +224,21 @@ function createGitHubTracker(): Tracker {
         ]);
       }
 
+      // Handle label removal
+      if (update.removeLabels && update.removeLabels.length > 0) {
+        for (const label of update.removeLabels) {
+          await gh([
+            "issue",
+            "edit",
+            identifier,
+            "--repo",
+            project.repo,
+            "--remove-label",
+            label,
+          ]);
+        }
+      }
+
       // Handle assignee changes
       if (update.assignee) {
         await gh([
