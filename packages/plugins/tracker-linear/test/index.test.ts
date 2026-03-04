@@ -593,6 +593,100 @@ describe("tracker-linear plugin", () => {
       expect(body.variables.assigneeId).toBe("user-1");
     });
 
+    it("removes labels by filtering current labels", async () => {
+      // 1: resolve identifier to UUID
+      mockLinearAPI({ issue: { id: "uuid-123", team: { id: "team-1" } } });
+      // 2: fetch current labels on the issue
+      mockLinearAPI({
+        issue: {
+          labels: {
+            nodes: [
+              { id: "label-1", name: "bug" },
+              { id: "label-2", name: "in-progress" },
+              { id: "label-3", name: "urgent" },
+            ],
+          },
+        },
+      });
+      // 3: issueUpdate with filtered labelIds
+      mockLinearAPI({ issueUpdate: { success: true } });
+
+      await tracker.updateIssue!("INT-123", { removeLabels: ["bug", "urgent"] }, project);
+      expect(requestMock).toHaveBeenCalledTimes(3);
+
+      // Verify only "in-progress" label remains
+      const writeCall = requestMock.mock.results[2].value.write.mock.calls[0][0];
+      const body = JSON.parse(writeCall);
+      expect(body.variables.labelIds).toEqual(["label-2"]);
+    });
+
+    it("handles case-insensitive label removal", async () => {
+      // 1: resolve identifier
+      mockLinearAPI({ issue: { id: "uuid-123", team: { id: "team-1" } } });
+      // 2: fetch current labels — note mixed case
+      mockLinearAPI({
+        issue: {
+          labels: {
+            nodes: [
+              { id: "label-1", name: "Agent-Ready" },
+              { id: "label-2", name: "Bug" },
+            ],
+          },
+        },
+      });
+      // 3: issueUpdate
+      mockLinearAPI({ issueUpdate: { success: true } });
+
+      // Remove with lowercase — should still match "Agent-Ready"
+      await tracker.updateIssue!("INT-123", { removeLabels: ["agent-ready"] }, project);
+      expect(requestMock).toHaveBeenCalledTimes(3);
+
+      const writeCall = requestMock.mock.results[2].value.write.mock.calls[0][0];
+      const body = JSON.parse(writeCall);
+      // Only "Bug" should remain
+      expect(body.variables.labelIds).toEqual(["label-2"]);
+    });
+
+    it("handles both add and remove labels", async () => {
+      // 1: resolve identifier
+      mockLinearAPI({ issue: { id: "uuid-123", team: { id: "team-1" } } });
+      // 2: fetch existing labels for additive merge
+      mockLinearAPI({ issue: { labels: { nodes: [{ id: "label-old" }] } } });
+      // 3: team label lookup for adding
+      mockLinearAPI({
+        issueLabels: {
+          nodes: [{ id: "label-new", name: "in-review" }],
+        },
+      });
+      // 4: issueUpdate (add labels)
+      mockLinearAPI({ issueUpdate: { success: true } });
+      // 5: fetch current labels for removal
+      mockLinearAPI({
+        issue: {
+          labels: {
+            nodes: [
+              { id: "label-old", name: "todo" },
+              { id: "label-new", name: "in-review" },
+            ],
+          },
+        },
+      });
+      // 6: issueUpdate (remove labels)
+      mockLinearAPI({ issueUpdate: { success: true } });
+
+      await tracker.updateIssue!(
+        "INT-123",
+        { labels: ["in-review"], removeLabels: ["todo"] },
+        project,
+      );
+      expect(requestMock).toHaveBeenCalledTimes(6);
+
+      // Verify the remove step kept only "in-review"
+      const writeCall = requestMock.mock.results[5].value.write.mock.calls[0][0];
+      const body = JSON.parse(writeCall);
+      expect(body.variables.labelIds).toEqual(["label-new"]);
+    });
+
     it("updates labels additively (merges with existing)", async () => {
       // 1: resolve identifier
       mockLinearAPI({ issue: { id: "uuid-123", team: { id: "team-1" } } });
