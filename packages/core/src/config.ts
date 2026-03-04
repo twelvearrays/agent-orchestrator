@@ -120,6 +120,21 @@ const DefaultPluginsSchema = z.object({
   notifiers: z.array(z.string()).default(["composio", "desktop"]),
 });
 
+const PipelineAgentConfigSchema = z.object({
+  agent: z.string().default("claude-code"),
+  model: z.string().default("opus"),
+  promptFile: z.string().optional(),
+  maxRetries: z.number().default(3),
+});
+
+const PipelineConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  checkCommands: z.array(z.string()).default(["pnpm typecheck", "pnpm lint", "pnpm test"]),
+  testAgent: PipelineAgentConfigSchema.default({}),
+  reviewAgent: PipelineAgentConfigSchema.default({}),
+  maxIterations: z.number().default(5),
+});
+
 const OrchestratorConfigSchema = z.object({
   port: z.number().default(3000),
   terminalPort: z.number().optional(),
@@ -136,6 +151,7 @@ const OrchestratorConfigSchema = z.object({
     info: ["composio"],
   }),
   reactions: z.record(ReactionConfigSchema).default({}),
+  pipeline: PipelineConfigSchema.optional(),
 });
 
 // =============================================================================

@@ -26,6 +26,9 @@ export type SessionId = string;
 export type SessionStatus =
   | "spawning"
   | "working"
+  | "checking"
+  | "testing"
+  | "reviewing"
   | "pr_open"
   | "ci_failed"
   | "review_pending"
@@ -74,6 +77,9 @@ export const DEFAULT_READY_THRESHOLD_MS = 300_000; // 5 minutes
 export const SESSION_STATUS = {
   SPAWNING: "spawning" as const,
   WORKING: "working" as const,
+  CHECKING: "checking" as const,
+  TESTING: "testing" as const,
+  REVIEWING: "reviewing" as const,
   PR_OPEN: "pr_open" as const,
   CI_FAILED: "ci_failed" as const,
   REVIEW_PENDING: "review_pending" as const,
@@ -178,12 +184,41 @@ export interface SessionSpawnConfig {
   prompt?: string;
   /** Override the agent plugin for this session (e.g. "codex", "claude-code") */
   agent?: string;
+  /** Use an existing workspace instead of creating one */
+  workspacePath?: string;
+  /** Role for this session */
+  role?: "coder" | "tester" | "reviewer";
+  /** Parent session ID for pipeline agents */
+  parentSession?: string;
+  /** Skip pipeline stages */
+  skipPipeline?: boolean;
 }
 
 /** Config for creating an orchestrator session */
 export interface OrchestratorSpawnConfig {
   projectId: string;
   systemPrompt?: string;
+}
+
+// =============================================================================
+// PIPELINE CONFIGURATION
+// =============================================================================
+
+/** Config for an agent used in the pre-PR pipeline (tester or reviewer) */
+export interface PipelineAgentConfig {
+  agent: string;
+  model: string;
+  promptFile?: string;
+  maxRetries: number;
+}
+
+/** Pre-PR pipeline configuration — runs checks, tests, and reviews before opening a PR */
+export interface PipelineConfig {
+  enabled: boolean;
+  checkCommands: string[];
+  testAgent: PipelineAgentConfig;
+  reviewAgent: PipelineAgentConfig;
+  maxIterations: number;
 }
 
 // =============================================================================
@@ -948,6 +983,9 @@ export interface OrchestratorConfig {
 
   /** Default reaction configs */
   reactions: Record<string, ReactionConfig>;
+
+  /** Pre-PR pipeline configuration */
+  pipeline?: PipelineConfig;
 }
 
 export interface DefaultPlugins {
@@ -1173,7 +1211,9 @@ export interface SessionMetadata {
   createdAt?: string;
   runtimeHandle?: string;
   restoredAt?: string;
-  role?: string; // "orchestrator" for orchestrator sessions
+  role?: string; // "orchestrator" for orchestrator sessions, "tester", "reviewer" for pipeline agents
+  parentSession?: string; // Parent session ID for pipeline agents
+  skipPipeline?: string; // "true" to skip pipeline stages
   dashboardPort?: number;
   terminalWsPort?: number;
   directTerminalWsPort?: number;

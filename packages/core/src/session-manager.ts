@@ -11,8 +11,10 @@
  * Reference: scripts/claude-ao-session, scripts/send-to-session
  */
 
+import { execFile } from "node:child_process";
 import { statSync, existsSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import {
   isIssueNotFoundError,
   isRestorable,
@@ -56,6 +58,8 @@ import {
   validateAndStoreOrigin,
 } from "./paths.js";
 
+const execFileAsync = promisify(execFile);
+
 /** Escape regex metacharacters in a string. */
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -88,6 +92,9 @@ function safeJsonParse<T>(str: string): T | null {
 const VALID_STATUSES: ReadonlySet<string> = new Set([
   "spawning",
   "working",
+  "checking",
+  "testing",
+  "reviewing",
   "pr_open",
   "ci_failed",
   "review_pending",
@@ -413,7 +420,21 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
 
     // Create workspace (if workspace plugin is available)
     let workspacePath = project.path;
-    if (plugins.workspace) {
+    if (spawnConfig.workspacePath) {
+      // Use an existing workspace (e.g. pipeline agents reuse the coder's worktree)
+      workspacePath = spawnConfig.workspacePath;
+
+      // Detect the current branch from the existing workspace
+      try {
+        const { stdout } = await execFileAsync("git", ["branch", "--show-current"], {
+          cwd: workspacePath,
+          timeout: 30_000,
+        });
+        branch = stdout.trim() || branch;
+      } catch {
+        // Non-fatal: keep the branch name computed above
+      }
+    } else if (plugins.workspace) {
       try {
         const wsInfo = await plugins.workspace.create({
           projectId: spawnConfig.projectId,
@@ -549,6 +570,9 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         issue: spawnConfig.issueId,
         project: spawnConfig.projectId,
         agent: plugins.agent.name, // Persist agent name for lifecycle manager
+        role: spawnConfig.role ?? "coder",
+        parentSession: spawnConfig.parentSession,
+        skipPipeline: spawnConfig.skipPipeline ? "true" : undefined,
         createdAt: new Date().toISOString(),
         runtimeHandle: JSON.stringify(handle),
       });
@@ -1020,6 +1044,8 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
         pr: raw["pr"],
         summary: raw["summary"],
         project: raw["project"],
+        parentSession: raw["parentSession"],
+        skipPipeline: raw["skipPipeline"],
         createdAt: raw["createdAt"],
         runtimeHandle: raw["runtimeHandle"],
       });
