@@ -51,6 +51,10 @@ export type { SessionManagerDeps } from "./session-manager.js";
 export { createLifecycleManager } from "./lifecycle-manager.js";
 export type { LifecycleManagerDeps } from "./lifecycle-manager.js";
 
+// Pipeline manager — pre-PR quality pipeline
+export { createPipelineManager } from "./pipeline-manager.js";
+export type { PipelineDeps, PipelineResult, PipelineManager } from "./pipeline-manager.js";
+
 // Prompt builder — layered prompt composition
 export { buildPrompt, BASE_AGENT_PROMPT } from "./prompt-builder.js";
 export type { PromptBuildConfig } from "./prompt-builder.js";
