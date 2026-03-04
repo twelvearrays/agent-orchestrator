@@ -5,12 +5,14 @@ import type {
   DashboardSession,
   SSESnapshotEvent,
   SSESessionUpdateEvent,
+  SSESessionAddedEvent,
   SSESessionRemovedEvent,
 } from "@/lib/types";
 
 type Action =
   | { type: "reset"; sessions: DashboardSession[] }
   | { type: "snapshot"; patches: SSESnapshotEvent["sessions"] }
+  | { type: "session-added"; session: SSESessionAddedEvent["session"] }
   | { type: "session-update"; patch: SSESessionUpdateEvent["session"] }
   | { type: "session-removed"; sessionId: string };
 
@@ -34,22 +36,17 @@ function reducer(state: DashboardSession[], action: Action): DashboardSession[] 
         changed = true;
         return { ...s, status: patch.status, activity: patch.activity, lastActivityAt: patch.lastActivityAt };
       });
-      // Check for new sessions not in current state
-      for (const patch of action.patches) {
-        if (!state.some((s) => s.id === patch.id)) {
-          changed = true;
-        }
-      }
       return changed ? next : state;
+    }
+    case "session-added": {
+      // Deduplicate — ignore if already present
+      if (state.some((s) => s.id === action.session.id)) return state;
+      return [...state, action.session];
     }
     case "session-update": {
       const { patch } = action;
       const idx = state.findIndex((s) => s.id === patch.id);
-      if (idx === -1) {
-        // New session — we don't have full DashboardSession data from this event,
-        // so we can't add it. The next snapshot poll will pick it up.
-        return state;
-      }
+      if (idx === -1) return state;
       const existing = state[idx];
       if (
         existing.status === patch.status &&
@@ -90,6 +87,11 @@ export function useSessionEvents(initialSessions: DashboardSession[]): Dashboard
           case "snapshot": {
             const snapshot = data as SSESnapshotEvent;
             dispatch({ type: "snapshot", patches: snapshot.sessions });
+            break;
+          }
+          case "session-added": {
+            const added = data as SSESessionAddedEvent;
+            dispatch({ type: "session-added", session: added.session });
             break;
           }
           case "session-update": {

@@ -23,7 +23,6 @@ import { CommandPalette } from "./CommandPalette";
 import { SpawnDialog } from "./SpawnDialog";
 import { ViewToggle } from "./ViewToggle";
 import { SessionRow } from "./SessionRow";
-import { IssueQueue } from "./IssueQueue";
 import type { DashboardIssue } from "@/app/api/issues/route";
 import { useSessionEvents } from "@/hooks/useSessionEvents";
 import { useCommandPalette } from "@/hooks/useCommandPalette";
@@ -135,17 +134,6 @@ export function Dashboard({ initialSessions, stats: _stats, orchestratorId, proj
     const res = await fetch(`/api/prs/${prNumber}/merge`, { method: "POST" });
     if (!res.ok) {
       console.error(`Failed to merge PR #${prNumber}:`, await res.text());
-    }
-  };
-
-  const handleAssign = async (issueId: string) => {
-    const res = await fetch(`/api/issues/${encodeURIComponent(issueId)}/assign`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId: undefined }),
-    });
-    if (!res.ok) {
-      console.error(`Failed to assign issue ${issueId}:`, await res.text());
     }
   };
 
@@ -281,6 +269,7 @@ export function Dashboard({ initialSessions, stats: _stats, orchestratorId, proj
     [sessions],
   );
 
+  const readyIssueCount = useMemo(() => issues.filter((i) => !i.sessionId).length, [issues]);
   const hasActiveSessions = BOARD_LEVELS.slice(0, -1).some((l) => grouped[l].length > 0);
 
   return (
@@ -301,8 +290,16 @@ export function Dashboard({ initialSessions, stats: _stats, orchestratorId, proj
             </div>
 
             {/* Metrics */}
-            <div className="hidden sm:block">
+            <div className="hidden sm:flex sm:items-center sm:gap-2">
               <MetricsBar sessions={sessions} />
+              {readyIssueCount > 0 && (
+                <a
+                  href="/issues"
+                  className="flex items-center gap-1 rounded-full border border-[var(--color-border-default)] bg-[var(--color-bg-subtle)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-text-secondary)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text-primary)] hover:no-underline"
+                >
+                  {readyIssueCount} ready
+                </a>
+              )}
             </div>
 
             <div className="flex-1" />
@@ -356,13 +353,6 @@ export function Dashboard({ initialSessions, stats: _stats, orchestratorId, proj
           onFilterStage={setPipelineFilter}
         />
       </div>
-
-      {/* ── Zone 2b: Issue Queue ─────────────────────────────────── */}
-      {issues.length > 0 && (
-        <div className="px-6 pt-4 sm:px-8">
-          <IssueQueue issues={issues} onAssign={handleAssign} />
-        </div>
-      )}
 
       {/* ── Rate limit notice ─────────────────────────────────────── */}
       {anyRateLimited && !rateLimitDismissed && (

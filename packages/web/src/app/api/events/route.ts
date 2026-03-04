@@ -52,10 +52,12 @@ export async function GET(): Promise<Response> {
 
         const { sessionManager, config } = services;
 
-        // Send initial snapshot
+        // Send initial snapshot + track known IDs for new-session detection
+        const knownIds = new Set<string>();
         try {
           const sessions = await sessionManager.list();
           const dashboardSessions = sessions.map(sessionToDashboard);
+          for (const s of sessions) knownIds.add(s.id);
           send(
             JSON.stringify({
               type: "snapshot",
@@ -79,6 +81,7 @@ export async function GET(): Promise<Response> {
         const onChange = (event: SessionChangeEvent) => {
           void (async () => {
             if (event.type === "removed") {
+              knownIds.delete(event.sessionId);
               send(JSON.stringify({ type: "session-removed", sessionId: event.sessionId }));
               return;
             }
@@ -91,18 +94,26 @@ export async function GET(): Promise<Response> {
                 return;
               }
               const dashboard = sessionToDashboard(session);
-              send(
-                JSON.stringify({
-                  type: "session-update",
-                  session: {
-                    id: dashboard.id,
-                    status: dashboard.status,
-                    activity: dashboard.activity,
-                    attentionLevel: getAttentionLevel(dashboard),
-                    lastActivityAt: dashboard.lastActivityAt,
-                  },
-                }),
-              );
+
+              if (!knownIds.has(event.sessionId)) {
+                // New session — send full data so client can render the card
+                knownIds.add(event.sessionId);
+                send(JSON.stringify({ type: "session-added", session: dashboard }));
+              } else {
+                // Known session — send lightweight patch
+                send(
+                  JSON.stringify({
+                    type: "session-update",
+                    session: {
+                      id: dashboard.id,
+                      status: dashboard.status,
+                      activity: dashboard.activity,
+                      attentionLevel: getAttentionLevel(dashboard),
+                      lastActivityAt: dashboard.lastActivityAt,
+                    },
+                  }),
+                );
+              }
             } catch {
               // Transient read error — skip, next change or fallback poll will catch it
             }
@@ -140,7 +151,7 @@ export async function GET(): Promise<Response> {
               // Transient service error — skip, retry on next interval
             }
           })();
-        }, 30_000);
+        }, 10_000);
       })();
 
       // 15s heartbeat

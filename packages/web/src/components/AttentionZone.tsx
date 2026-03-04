@@ -51,7 +51,7 @@ const zoneConfig: Record<
   done: {
     label: "Done",
     color: "var(--color-text-tertiary)",
-    defaultCollapsed: false,
+    defaultCollapsed: true,
   },
 };
 

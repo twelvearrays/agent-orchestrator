@@ -194,6 +194,12 @@ export interface SSESessionUpdateEvent {
   };
 }
 
+/** SSE new session event from /api/events (file-watcher driven) */
+export interface SSESessionAddedEvent {
+  type: "session-added";
+  session: DashboardSession;
+}
+
 /** SSE session removed event from /api/events (file-watcher driven) */
 export interface SSESessionRemovedEvent {
   type: "session-removed";
