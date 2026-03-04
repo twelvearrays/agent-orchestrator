@@ -55,7 +55,7 @@ function IssueQueueRow({
     }
   };
 
-  const priorityLabel = issue.priority != null ? `P${issue.priority}` : null;
+  const priorityLabel = issue.priority !== undefined && issue.priority !== null ? `P${issue.priority}` : null;
 
   return (
     <div className="flex items-center gap-3 px-4 py-2">

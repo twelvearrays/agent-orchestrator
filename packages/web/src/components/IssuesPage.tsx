@@ -55,7 +55,7 @@ function getStatusIcon(issue: DashboardIssue): {
 }
 
 function priorityLabel(priority: number | undefined): string | null {
-  if (priority == null) return null;
+  if (priority === undefined || priority === null) return null;
   if (priority === 0) return "No priority";
   return `P${priority}`;
 }
@@ -496,7 +496,7 @@ function IssueRow({
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                onNavigateSession(issue.sessionId!);
+                if (issue.sessionId) onNavigateSession(issue.sessionId);
               }}
               className="truncate text-[10px] font-medium text-[var(--color-accent)] hover:underline"
               title={`Session: ${issue.sessionId}`}
@@ -571,7 +571,7 @@ function IssueRow({
                   Session:
                 </span>
                 <button
-                  onClick={() => onNavigateSession(issue.sessionId!)}
+                  onClick={() => { if (issue.sessionId) onNavigateSession(issue.sessionId); }}
                   className="font-[var(--font-mono)] text-[10px] text-[var(--color-accent)] hover:underline"
                 >
                   {issue.sessionId}
