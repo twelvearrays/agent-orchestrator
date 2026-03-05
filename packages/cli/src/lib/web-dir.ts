@@ -157,6 +157,28 @@ export async function buildDashboardEnv(
 }
 
 /**
+ * Locate the @composio/ao-daemon package directory.
+ * Same strategy as findWebDir: resolve from node_modules, fallback to sibling paths.
+ */
+export function findDaemonDir(): string {
+  try {
+    const pkgJson = require.resolve("@composio/ao-daemon/package.json");
+    return resolve(pkgJson, "..");
+  } catch {
+    const candidates = [
+      resolve(__dirname, "../../../daemon"),
+      resolve(__dirname, "../../../../packages/daemon"),
+    ];
+    for (const candidate of candidates) {
+      if (existsSync(resolve(candidate, "package.json"))) {
+        return candidate;
+      }
+    }
+    return candidates[0];
+  }
+}
+
+/**
  * Locate the @composio/ao-web package directory.
  * Uses createRequire for ESM-compatible require.resolve, with fallback
  * to sibling package paths that work from both src/ and dist/.
