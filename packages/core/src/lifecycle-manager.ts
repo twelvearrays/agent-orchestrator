@@ -422,6 +422,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     // Execute the reaction action
     const action = reactionConfig.action ?? "notify";
+    console.log(`[LIFECYCLE] Reaction '${reactionKey}' (${action}) for ${sessionId}`);
     let result: ReactionResult | null = null;
 
     switch (action) {
@@ -616,6 +617,9 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           const trackerName = project.tracker?.plugin ?? "linear";
           const issueTracker = registry.get<Tracker>("tracker", trackerName);
           if (issueTracker?.updateIssue) {
+            console.log(
+              `[LIFECYCLE] Updating tracker: ${session.issueId} → ${reactionConfig.trackerState}`,
+            );
             await issueTracker.updateIssue(
               session.issueId,
               { stateName: reactionConfig.trackerState },
@@ -623,7 +627,11 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             );
           }
         }
-      } catch {
+      } catch (err) {
+        console.error(
+          `[LIFECYCLE] Tracker update failed for ${sessionId}:`,
+          err instanceof Error ? err.message : String(err),
+        );
         // Side-effect failure: only fail result for pure update-tracker action
         if (action === "update-tracker") {
           return {
@@ -673,6 +681,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
     if (newStatus !== oldStatus) {
       // State transition detected
+      console.log(`[LIFECYCLE] ${session.id}: ${oldStatus} → ${newStatus}`);
       states.set(session.id, newStatus);
 
       // Update metadata — session.projectId is the config key (e.g., "my-app")
