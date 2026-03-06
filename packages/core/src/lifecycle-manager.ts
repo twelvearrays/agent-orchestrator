@@ -817,20 +817,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
           if (reactionConfig && reactionConfig.action) {
             if (firstSeen) {
-              // First-seen: only run update-tracker to sync Linear state, skip
-              // send-to-agent / notify / auto-merge to avoid stale actions.
-              if (reactionConfig.action === "update-tracker") {
-                await executeReaction(
-                  session.id,
-                  session.projectId,
-                  reactionKey,
-                  reactionConfig as ReactionConfig,
-                );
-              } else {
-                console.log(
-                  `[LIFECYCLE] Skipping '${reactionKey}' (${reactionConfig.action}) for ${session.id} — first seen after startup`,
-                );
-              }
+              // First-seen after daemon startup: skip ALL reactions to avoid
+              // overwriting human decisions (e.g., QA moved issue to "Approved"
+              // but daemon restart would push it back to "In Review").
+              console.log(
+                `[LIFECYCLE] Skipping '${reactionKey}' (${reactionConfig.action}) for ${session.id} — first seen after startup`,
+              );
               reactionHandledNotify = true;
             } else {
               // auto: false skips automated agent actions but still allows notifications
