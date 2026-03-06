@@ -654,6 +654,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
 
   /** Send a notification to all configured notifiers. */
   async function notifyHuman(event: OrchestratorEvent, priority: EventPriority): Promise<void> {
+    console.log(`[LIFECYCLE] Notify (${priority}): ${event.type} — ${event.message}`);
     const eventWithPriority = { ...event, priority };
     const notifierNames = config.notificationRouting[priority] ?? config.defaults.notifiers;
 
@@ -675,6 +676,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     // (not session.status, which list() may have already overwritten for dead runtimes).
     // This ensures transitions are detected after a lifecycle manager restart.
     const tracked = states.get(session.id);
+    const firstSeen = tracked === undefined; // true on first poll after daemon startup
     const oldStatus =
       tracked ?? ((session.metadata?.["status"] as SessionStatus | undefined) || session.status);
     const newStatus = await determineStatus(session);
@@ -795,7 +797,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           });
       }
 
-      // Handle transition: notify humans and/or trigger reactions
+      // Handle transition: notify humans and/or trigger reactions.
+      // On first-seen sessions (daemon startup), only run tracker side-effects
+      // (update-tracker) — skip notifications and agent messages to avoid a
+      // flood of stale alerts every time the daemon restarts.
       const eventType = statusToEventType(oldStatus, newStatus);
       if (eventType) {
         let reactionHandledNotify = false;
@@ -811,25 +816,44 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             : globalReaction;
 
           if (reactionConfig && reactionConfig.action) {
-            // auto: false skips automated agent actions but still allows notifications
-            if (reactionConfig.auto !== false || reactionConfig.action === "notify") {
-              await executeReaction(
-                session.id,
-                session.projectId,
-                reactionKey,
-                reactionConfig as ReactionConfig,
-              );
-              // Reaction is handling this event — suppress immediate human notification.
-              // "send-to-agent" retries + escalates on its own; "notify"/"auto-merge"
-              // already call notifyHuman internally. Notifying here would bypass the
-              // delayed escalation behaviour configured via retries/escalateAfter.
+            if (firstSeen) {
+              // First-seen: only run update-tracker to sync Linear state, skip
+              // send-to-agent / notify / auto-merge to avoid stale actions.
+              if (reactionConfig.action === "update-tracker") {
+                await executeReaction(
+                  session.id,
+                  session.projectId,
+                  reactionKey,
+                  reactionConfig as ReactionConfig,
+                );
+              } else {
+                console.log(
+                  `[LIFECYCLE] Skipping '${reactionKey}' (${reactionConfig.action}) for ${session.id} — first seen after startup`,
+                );
+              }
               reactionHandledNotify = true;
+            } else {
+              // auto: false skips automated agent actions but still allows notifications
+              if (reactionConfig.auto !== false || reactionConfig.action === "notify") {
+                await executeReaction(
+                  session.id,
+                  session.projectId,
+                  reactionKey,
+                  reactionConfig as ReactionConfig,
+                );
+                // Reaction is handling this event — suppress immediate human notification.
+                // "send-to-agent" retries + escalates on its own; "notify"/"auto-merge"
+                // already call notifyHuman internally. Notifying here would bypass the
+                // delayed escalation behaviour configured via retries/escalateAfter.
+                reactionHandledNotify = true;
+              }
             }
           }
         }
 
         // For significant transitions not already notified by a reaction, notify humans
-        if (!reactionHandledNotify) {
+        // (skip on first-seen to avoid notification flood on daemon restart)
+        if (!reactionHandledNotify && !firstSeen) {
           const priority = inferPriority(eventType);
           if (priority !== "info") {
             const event = createEvent(eventType, {
